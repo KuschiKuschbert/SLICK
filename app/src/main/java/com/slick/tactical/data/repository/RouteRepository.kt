@@ -3,6 +3,7 @@ package com.slick.tactical.data.repository
 import com.slick.tactical.data.local.dao.WeatherNodeDao
 import com.slick.tactical.data.local.entity.WeatherNodeEntity
 import com.slick.tactical.data.remote.OpenMeteoClient
+import com.slick.tactical.data.remote.ValhallRoutingClient
 import com.slick.tactical.engine.weather.Coordinate
 import com.slick.tactical.engine.weather.GripMatrix
 import com.slick.tactical.engine.weather.RouteForecaster
@@ -36,6 +37,7 @@ import javax.inject.Singleton
 class RouteRepository @Inject constructor(
     private val weatherNodeDao: WeatherNodeDao,
     private val openMeteoClient: OpenMeteoClient,
+    private val valhallClient: ValhallRoutingClient,
     private val routeForecaster: RouteForecaster,
     private val gripMatrix: GripMatrix,
     private val twilightMatrix: TwilightMatrix,
@@ -47,6 +49,29 @@ class RouteRepository @Inject constructor(
      * This is the single source of truth for the GripMatrix polyline gradient.
      */
     fun observeNodes(): Flow<List<WeatherNodeEntity>> = weatherNodeDao.observeAllNodes()
+
+    /**
+     * Full pre-flight pipeline:
+     * 1. Fetch route polyline from Valhalla (motorcycle costing)
+     * 2. Slice into 10km GripMatrix nodes via Haversine
+     * 3. Sync Open-Meteo weather for each node
+     *
+     * @param origin Start GPS coordinate
+     * @param destination End GPS coordinate
+     * @param averageSpeedKmh Rider's expected cruising speed in km/h
+     * @param departureTime24h Planned departure time in HH:mm (24h)
+     * @return Result containing number of weather nodes synced
+     */
+    suspend fun fetchRouteAndSync(
+        origin: Coordinate,
+        destination: Coordinate,
+        averageSpeedKmh: Double,
+        departureTime24h: String,
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        val polyline = valhallClient.fetchRoute(origin, destination)
+            .getOrElse { return@withContext Result.failure(it) }
+        syncRouteWeather(polyline, averageSpeedKmh, departureTime24h)
+    }
 
     /**
      * Slices the route and performs a full weather sync for all nodes.

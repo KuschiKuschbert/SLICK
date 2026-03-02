@@ -2,8 +2,8 @@ package com.slick.tactical.ui.inflight
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,7 +15,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -75,11 +74,11 @@ fun InFlightHudScreen(
         )
 
         // ── Zone 2: Tactical Focus (middle 50%) ──────────────────────────────
-        Zone2Map(
+        Zone2MapWrapper(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(0.50f),
-            // MapLibre integration -- see Zone2Map.kt
+            viewModel = viewModel,
         )
 
         // ── Zone 3: Interaction Deck (bottom 30%) ────────────────────────────
@@ -140,21 +139,21 @@ fun Zone1Header(
     }
 }
 
-/** Zone 2: MapLibre render placeholder -- full implementation in Zone2Map.kt */
+/** Zone 2: Real MapLibre render -- see Zone2Map.kt for full implementation */
 @Composable
-fun Zone2Map(modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier.background(SlickColors.Surface),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = "MapLibre Render\n(Phase 6 implementation)",
-            color = SlickColors.DataSecondary,
-            fontSize = 14.sp,
-            textAlign = TextAlign.Center,
-        )
-        // TODO Phase 6: AndroidView { MapView } with PMTiles + GripMatrix gradient + convoy clustering
-    }
+fun Zone2MapWrapper(
+    modifier: Modifier = Modifier,
+    viewModel: InFlightViewModel,
+) {
+    val state by viewModel.state.collectAsState()
+    Zone2Map(
+        modifier = modifier,
+        weatherNodes = state.weatherNodes,
+        riderLat = state.riderLat,
+        riderLon = state.riderLon,
+        riderBearing = state.riderBearingDeg,
+        convoyRiders = state.convoyRiders,
+    )
 }
 
 /** Zone 3: Two massive glove-friendly tap targets. Nothing else. */

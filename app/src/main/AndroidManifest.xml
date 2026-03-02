@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Network -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -85,8 +86,7 @@
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
-            tools:node="merge"
-            xmlns:tools="http://schemas.android.com/tools" />
+            tools:node="merge" />
 
         <!-- BroadcastReceiver for signal recovery (dead-zone beacon) -->
         <receiver
@@ -96,6 +96,11 @@
                 <action android:name="android.intent.action.SERVICE_STATE" />
             </intent-filter>
         </receiver>
+
+        <!-- Activity Recognition transitions: IN_VEHICLE/STILL for auto Pre to In-Flight -->
+        <receiver
+            android:name=".engine.location.ActivityTransitionReceiver"
+            android:exported="false" />
 
     </application>
 </manifest>

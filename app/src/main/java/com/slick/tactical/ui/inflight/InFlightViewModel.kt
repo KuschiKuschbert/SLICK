@@ -2,8 +2,12 @@ package com.slick.tactical.ui.inflight
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.slick.tactical.data.local.entity.WeatherNodeEntity
+import com.slick.tactical.data.repository.RouteRepository
 import com.slick.tactical.engine.audio.AudioRouteManager
+import com.slick.tactical.engine.mesh.ConvoyMeshManager
 import com.slick.tactical.engine.mesh.DetourManager
+import com.slick.tactical.engine.mesh.RiderState
 import com.slick.tactical.service.BatterySurvivalManager
 import com.slick.tactical.service.OperationalState
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -15,12 +19,20 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 
-/** UI state for the In-Flight HUD. Immutable snapshot observed by the Composable. */
+/** UI state for the In-Flight HUD. Immutable snapshot observed by all three Zones. */
 data class InFlightUiState(
+    // Zone 1 telemetry
     val speedKmh: Double = 0.0,
     val nextTurnDistanceMetres: Int = 0,
     val nextTurnArrow: String = "→",
     val eta24h: String = "--:--",
+    // Zone 2 map
+    val riderLat: Double = -26.7380,  // Default: Kawana
+    val riderLon: Double = 153.1230,
+    val riderBearingDeg: Float = 0f,
+    val weatherNodes: List<WeatherNodeEntity> = emptyList(),
+    val convoyRiders: Map<String, RiderState> = emptyMap(),
+    // Zone 3 interaction
     val isAudioMuted: Boolean = false,
     val operationalMode: OperationalState = OperationalState.FULL_TACTICAL,
 )
@@ -38,6 +50,8 @@ class InFlightViewModel @Inject constructor(
     private val batterySurvivalManager: BatterySurvivalManager,
     private val audioRouteManager: AudioRouteManager,
     private val detourManager: DetourManager,
+    private val routeRepository: RouteRepository,
+    private val convoyMeshManager: ConvoyMeshManager,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(InFlightUiState())
@@ -47,6 +61,8 @@ class InFlightViewModel @Inject constructor(
 
     init {
         observeBatterySurvivalState()
+        observeWeatherNodes()
+        observeConvoyRiders()
     }
 
     private fun observeBatterySurvivalState() {
@@ -54,6 +70,25 @@ class InFlightViewModel @Inject constructor(
             batterySurvivalManager.systemState.collectLatest { operationalState ->
                 _state.value = _state.value.copy(operationalMode = operationalState)
                 Timber.d("InFlightHUD: operational state changed to %s", operationalState)
+            }
+        }
+    }
+
+    /** Live feed of GripMatrix nodes from Room DB → Zone 2 map gradient */
+    private fun observeWeatherNodes() {
+        viewModelScope.launch {
+            routeRepository.observeNodes().collectLatest { nodes ->
+                _state.value = _state.value.copy(weatherNodes = nodes)
+                Timber.d("InFlightHUD: %d weather nodes updated", nodes.size)
+            }
+        }
+    }
+
+    /** Live convoy rider positions → Zone 2 map badges */
+    private fun observeConvoyRiders() {
+        viewModelScope.launch {
+            convoyMeshManager.connectedRiders.collectLatest { riders ->
+                _state.value = _state.value.copy(convoyRiders = riders)
             }
         }
     }
@@ -79,12 +114,23 @@ class InFlightViewModel @Inject constructor(
      * Updates speed and navigation telemetry from the GPS engine.
      * Called by the service layer as location updates arrive.
      */
-    fun updateTelemetry(speedKmh: Double, distanceToTurnM: Int, turnArrow: String, eta24h: String) {
+    fun updateTelemetry(
+        speedKmh: Double,
+        distanceToTurnM: Int,
+        turnArrow: String,
+        eta24h: String,
+        lat: Double,
+        lon: Double,
+        bearingDeg: Float,
+    ) {
         _state.value = _state.value.copy(
             speedKmh = speedKmh,
             nextTurnDistanceMetres = distanceToTurnM,
             nextTurnArrow = turnArrow,
             eta24h = eta24h,
+            riderLat = lat,
+            riderLon = lon,
+            riderBearingDeg = bearingDeg,
         )
     }
 }

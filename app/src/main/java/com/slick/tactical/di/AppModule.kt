@@ -2,6 +2,7 @@ package com.slick.tactical.di
 
 import android.content.Context
 import com.google.android.gms.location.LocationServices
+import com.slick.tactical.engine.location.ActivityRecognitionManager
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -15,6 +16,7 @@ import io.github.jan.supabase.realtime.Realtime
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import com.slick.tactical.data.remote.ValhallRoutingClient
 import io.ktor.client.plugins.logging.LogLevel
 import io.ktor.client.plugins.logging.Logging
 import io.ktor.serialization.kotlinx.json.json
@@ -60,6 +62,16 @@ object AppModule {
             }
         }
     }
+
+    @Provides
+    @Singleton
+    fun provideValhallRoutingClient(httpClient: HttpClient): ValhallRoutingClient =
+        ValhallRoutingClient(httpClient)
+
+    @Provides
+    @Singleton
+    fun provideActivityRecognitionManager(@ApplicationContext context: Context): ActivityRecognitionManager =
+        ActivityRecognitionManager(context)
 
     @Provides
     @Singleton
