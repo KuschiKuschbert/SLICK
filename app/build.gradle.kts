@@ -63,6 +63,23 @@ android {
             it.useJUnitPlatform()
         }
     }
+
+    // JUnit 5 JARs all contain META-INF/LICENSE.md -- exclude duplicates so
+    // the androidTest instrumentation APK can be assembled by Android Studio.
+    packaging {
+        resources {
+            excludes += listOf(
+                "META-INF/LICENSE.md",
+                "META-INF/LICENSE-notice.md",
+                "META-INF/NOTICE.md",
+                "META-INF/NOTICE",
+                "META-INF/LICENSE",
+                "META-INF/AL2.0",
+                "META-INF/LGPL2.1",
+                "META-INF/*.kotlin_module",
+            )
+        }
+    }
 }
 
 // Protobuf configuration
