@@ -66,6 +66,13 @@
         android:hardwareAccelerated="true"
         android:largeHeap="false">
 
+        <!-- Disable Sentry's ContentProvider auto-init so we can control DSN from SlickApplication.
+             Without this, SentryInitProvider runs before Application.onCreate() and crashes
+             when no DSN meta-data tag is present in the manifest. -->
+        <meta-data
+            android:name="io.sentry.auto-init"
+            android:value="false" />
+
         <!-- Main entry activity -->
         <activity
             android:name=".ui.MainActivity"

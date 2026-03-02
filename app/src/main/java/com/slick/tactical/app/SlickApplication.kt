@@ -39,15 +39,17 @@ class SlickApplication : Application() {
     private fun initialiseSentry() {
         if (!BuildConfig.ENABLE_CRASH_REPORTING) return
 
-        // SENTRY_DSN is excluded from BuildConfig via secrets.ignoreList to avoid empty-value
-        // compile errors. Read it from a resource string at runtime instead.
-        // For now, the DSN is read from BuildConfig if set via a build variant workaround,
-        // or passed via a manifest meta-data tag (which Sentry auto-reads on Android).
-        SentryAndroid.init(this) { options ->
-            // DSN is auto-read from AndroidManifest.xml meta-data tag "io.sentry.dsn"
-            // if set there, or you can set it explicitly:
-            // options.dsn = "https://YOUR_KEY@de.sentry.io/YOUR_PROJECT_ID"
+        // SENTRY_DSN comes from local.properties via the Secrets Gradle Plugin.
+        // It will be an empty string when not set (dev default).
+        // Guard here so the SDK is never initialised without a valid DSN.
+        val dsn = BuildConfig.SENTRY_DSN
+        if (dsn.isBlank()) {
+            Timber.i("Sentry disabled -- SENTRY_DSN not set in local.properties")
+            return
+        }
 
+        SentryAndroid.init(this) { options ->
+            options.dsn = dsn
             options.isEnabled = true
             options.environment = BuildConfig.BUILD_TYPE   // "release", "staging"
             options.release = "slick@${BuildConfig.VERSION_NAME}"
@@ -60,7 +62,7 @@ class SlickApplication : Application() {
             options.anrTimeoutIntervalMillis = 5_000L
 
             // Performance: minimal overhead -- only capture errors, no transactions
-            options.tracesSampleRate = 0.0  // No performance monitoring (battery cost)
+            options.tracesSampleRate = 0.0
 
             // Session tracking: know how many crashes vs total sessions
             options.isEnableAutoSessionTracking = true

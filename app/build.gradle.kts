@@ -25,6 +25,10 @@ android {
         // Required for JUnit 5 on Android
         testInstrumentationRunnerArguments["runnerBuilder"] =
             "de.mannodermaus.junit5.AndroidJUnit5Builder"
+
+        // Default empty DSN -- overridden by Secrets plugin when SENTRY_DSN is set in local.properties.
+        // SlickApplication.initialiseSentry() skips init when this is blank.
+        buildConfigField("String", "SENTRY_DSN", "\"\"")
     }
 
     buildTypes {
@@ -121,8 +125,8 @@ secrets {
     ignoreList.add("OPEN_METEO_API_KEY")
     // MAP_STYLE_URL may be the asset:// scheme which the plugin strips -- exclude it
     ignoreList.add("MAP_STYLE_URL")
-    // SENTRY_DSN may be empty in development -- exclude to avoid compile errors
-    ignoreList.add("SENTRY_DSN")
+    // SENTRY_DSN flows into BuildConfig as an empty string when not set in local.properties.
+    // SlickApplication.initialiseSentry() guards against the blank case and skips init.
 }
 
 dependencies {
