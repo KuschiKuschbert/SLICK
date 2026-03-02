@@ -16,6 +16,7 @@ import io.github.jan.supabase.realtime.Realtime
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import com.slick.tactical.data.remote.OverpassClient
 import com.slick.tactical.data.remote.ValhallRoutingClient
 import io.ktor.client.plugins.logging.LogLevel
 import io.ktor.client.plugins.logging.Logging
@@ -67,6 +68,11 @@ object AppModule {
     @Singleton
     fun provideValhallRoutingClient(httpClient: HttpClient): ValhallRoutingClient =
         ValhallRoutingClient(httpClient)
+
+    @Provides
+    @Singleton
+    fun provideOverpassClient(httpClient: HttpClient): OverpassClient =
+        OverpassClient(httpClient)
 
     @Provides
     @Singleton

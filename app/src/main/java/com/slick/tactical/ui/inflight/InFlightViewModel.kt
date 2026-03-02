@@ -35,6 +35,8 @@ data class InFlightUiState(
     // Zone 3 interaction
     val isAudioMuted: Boolean = false,
     val operationalMode: OperationalState = OperationalState.FULL_TACTICAL,
+    // Hazard pins marked by rider (lat, lon pairs)
+    val hazardPins: List<Pair<Double, Double>> = emptyList(),
 )
 
 /**
@@ -94,12 +96,36 @@ class InFlightViewModel @Inject constructor(
     }
 
     /**
-     * Marks a hazard at the current rider position.
-     * TODO Phase 6: Add hazard pin to MapLibre and broadcast to convoy via ConvoyMeshManager.
+     * Marks a hazard at the current rider GPS position.
+     * - Stores the hazard coordinate in [_state] for Zone2Map to render a pin
+     * - Broadcasts to convoy via [ConvoyMeshManager] if active
      */
     fun onMarkHazard() {
-        Timber.i("Hazard marked by rider")
-        // TODO Phase 6: Get current GPS position and broadcast hazard to convoy
+        val lat = _state.value.riderLat
+        val lon = _state.value.riderLon
+        if (lat == 0.0 && lon == 0.0) {
+            Timber.w("MARK HAZARD: no GPS fix yet -- skipping")
+            return
+        }
+
+        Timber.i("Hazard marked at %.4f, %.4f", lat, lon)
+
+        // Add to hazard pins list for Zone2Map rendering
+        val updated = _state.value.hazardPins + Pair(lat, lon)
+        _state.value = _state.value.copy(hazardPins = updated)
+
+        // Broadcast to convoy if active
+        val convoyId = convoyMeshManager.currentConvoyId ?: return
+        viewModelScope.launch {
+            convoyMeshManager.broadcastPosition(
+                lat = lat,
+                lon = lon,
+                speedKmh = _state.value.speedKmh,
+                bearingDeg = _state.value.riderBearingDeg.toDouble(),
+                role = convoyMeshManager.currentRole,
+                convoyId = convoyId,
+            ).onFailure { e -> Timber.w(e, "MARK HAZARD broadcast failed") }
+        }
     }
 
     /**

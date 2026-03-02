@@ -18,15 +18,21 @@ import com.slick.tactical.engine.imu.SosState
 import com.slick.tactical.engine.location.ActivityRecognitionManager
 import com.slick.tactical.engine.location.BatchedLocationManager
 import com.slick.tactical.engine.mesh.ConvoyMeshManager
+import com.slick.tactical.engine.mesh.ConvoyOptimizationManager
 import com.slick.tactical.engine.mesh.ConvoyRole
 import com.slick.tactical.ui.MainActivity
+import com.slick.tactical.util.SlickConstants
 import dagger.hilt.android.AndroidEntryPoint
+import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.postgrest.postgrest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
 import timber.log.Timber
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -38,14 +44,13 @@ import javax.inject.Inject
  *
  * Responsibilities:
  * - GPS batch collection + breadcrumb recording to Room DB
- * - CrashDetectionManager IMU monitoring → SOS countdown
- * - ConvoyMeshManager P2P position broadcasting
+ * - CrashDetectionManager IMU monitoring → SOS countdown → Supabase sos_alerts insert
+ * - ConvoyMeshManager P2P position broadcasting at 1Hz (Pack: 0.2Hz via >4 Protocol)
  * - AudioRouteManager TTS alert delivery
  * - BatterySurvivalManager operational state
  * - ActivityRecognitionManager IN_VEHICLE state
  *
  * Persistent notification: "SLICK: Convoy Link Active"
- * Cannot be swiped away. Tapping opens the active HUD.
  */
 @AndroidEntryPoint
 class ConvoyForegroundService : Service() {
@@ -56,8 +61,10 @@ class ConvoyForegroundService : Service() {
     @Inject lateinit var crashDetectionManager: CrashDetectionManager
     @Inject lateinit var audioRouteManager: AudioRouteManager
     @Inject lateinit var meshManager: ConvoyMeshManager
+    @Inject lateinit var convoyOptimizationManager: ConvoyOptimizationManager
     @Inject lateinit var activityRecognitionManager: ActivityRecognitionManager
     @Inject lateinit var breadcrumbDao: RiderBreadcrumbDao
+    @Inject lateinit var supabaseClient: SupabaseClient
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -88,7 +95,7 @@ class ConvoyForegroundService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        return START_STICKY  // Restart if killed -- critical for rider safety
+        return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -106,19 +113,16 @@ class ConvoyForegroundService : Service() {
     // ─── Engine Room Initialisation ───────────────────────────────────────────
 
     private fun initializeEngineRoom() {
-        // Battery survival -- must be first
         batterySurvivalManager.initializePowerListener()
             .onFailure { e -> Timber.e(e, "BatterySurvivalManager failed to initialize") }
 
-        // IMU crash detection
         crashDetectionManager.startMonitoring()
             .onFailure { e -> Timber.e(e, "CrashDetectionManager failed to start") }
 
-        // TTS audio
         audioRouteManager.initializeTts()
             .onFailure { e -> Timber.e(e, "AudioRouteManager TTS failed to initialize") }
 
-        // Wire CrashDetectionManager.isInVehicle to ActivityRecognition state
+        // Sync ActivityRecognition IN_VEHICLE state to crash detector phone-drop filter
         serviceScope.launch {
             activityRecognitionManager.isInVehicle.collectLatest { inVehicle ->
                 crashDetectionManager.isInVehicle = inVehicle
@@ -134,7 +138,7 @@ class ConvoyForegroundService : Service() {
             }
         }
 
-        // Observe SOS state -- fire TTS alert on countdown
+        // Observe SOS state -- fire TTS alerts and Supabase insert on trigger
         serviceScope.launch {
             crashDetectionManager.sosState.collectLatest { sosState ->
                 when (sosState) {
@@ -151,8 +155,8 @@ class ConvoyForegroundService : Service() {
                         Timber.e("SOS TRIGGERED at %s -- rider unresponsive", sosState.triggeredAt24h)
                         serviceScope.launch {
                             audioRouteManager.speakTacticalAlert("SOS TRANSMITTED. Emergency services alerted.")
+                            insertSosAlert(sosState.triggeredAt24h)
                         }
-                        // TODO: fire SOS to Supabase sos_alerts table
                     }
                     else -> {}
                 }
@@ -161,6 +165,9 @@ class ConvoyForegroundService : Service() {
 
         // Start GPS collection + breadcrumb recording
         startGpsAndBreadcrumbs()
+
+        // Start P2P broadcast loop (1Hz base, 0.2Hz for Pack via >4 Protocol)
+        startP2pBroadcastLoop()
     }
 
     // ─── GPS + Breadcrumb Recording ───────────────────────────────────────────
@@ -169,14 +176,18 @@ class ConvoyForegroundService : Service() {
         serviceScope.launch {
             batterySurvivalManager.systemState.collectLatest { operationalState ->
                 locationManager.locationFlow(operationalState).collect { location ->
-                    val speedKmh = location.speed * 3.6  // m/s → km/h
+                    val speedKmh = location.speed * 3.6
+
+                    // Update mesh manager with latest position for broadcast loop
+                    meshManager.lastKnownLat = location.latitude
+                    meshManager.lastKnownLon = location.longitude
 
                     // Record breadcrumb to Room for offline safety tracking
-                    if (location.accuracy < 50f) {  // Only record GPS fixes with < 50m accuracy
+                    if (location.accuracy < 50f) {
                         val breadcrumb = RiderBreadcrumbEntity(
                             id = UUID.randomUUID().toString(),
                             riderId = sessionRiderId,
-                            convoyId = null,  // Set when convoy is active
+                            convoyId = meshManager.currentConvoyId,
                             latitude = location.latitude,
                             longitude = location.longitude,
                             speedKmh = speedKmh,
@@ -198,18 +209,84 @@ class ConvoyForegroundService : Service() {
         }
     }
 
+    // ─── P2P Broadcast Loop (1Hz / 0.2Hz for Pack) ───────────────────────────
+
+    /**
+     * Runs a 1Hz coroutine that broadcasts the rider's GPS position to the convoy mesh.
+     *
+     * Pack riders are throttled to 0.2Hz (once per 5 cycles) via [ConvoyOptimizationManager]
+     * when the convoy exceeds [SlickConstants.CONVOY_CLUSTERING_THRESHOLD] riders.
+     *
+     * Only broadcasts when a convoy is active ([ConvoyMeshManager.isConvoyActive]).
+     * Stops broadcasting in SURVIVAL_MODE (Wi-Fi Direct killed by [adaptSystemsToState]).
+     */
+    private fun startP2pBroadcastLoop() {
+        serviceScope.launch(Dispatchers.IO) {
+            var cycleCount = 0L
+            while (true) {
+                delay(SlickConstants.LEAD_BROADCAST_INTERVAL_MS)  // 1 second base
+
+                val convoyId = meshManager.currentConvoyId ?: continue
+                val role = meshManager.currentRole
+                val operationalState = batterySurvivalManager.systemState.value
+
+                if (operationalState == OperationalState.SURVIVAL_MODE) continue
+                if (!meshManager.isConvoyActive.value) continue
+
+                cycleCount++
+
+                if (!convoyOptimizationManager.shouldTransmitThisCycle(role)) {
+                    Timber.d("P2P broadcast skipped this cycle (Pack throttle)")
+                    continue
+                }
+
+                val lat = meshManager.lastKnownLat
+                val lon = meshManager.lastKnownLon
+                if (lat == 0.0 && lon == 0.0) continue  // No GPS fix yet
+
+                meshManager.broadcastPosition(
+                    lat = lat,
+                    lon = lon,
+                    speedKmh = 0.0,  // Speed is updated by GPS flow above
+                    bearingDeg = 0.0,
+                    role = role,
+                    convoyId = convoyId,
+                ).onFailure { e ->
+                    Timber.w(e, "P2P broadcast failed on cycle %d", cycleCount)
+                }
+            }
+        }
+    }
+
+    // ─── SOS Supabase Insert ──────────────────────────────────────────────────
+
+    private suspend fun insertSosAlert(triggeredAt24h: String) {
+        try {
+            supabaseClient.postgrest["sos_alerts"].insert(
+                SosAlertRow(
+                    rider_id = sessionRiderId,
+                    convoy_id = meshManager.currentConvoyId,
+                    latitude = meshManager.lastKnownLat,
+                    longitude = meshManager.lastKnownLon,
+                    triggered_at_24h = triggeredAt24h,
+                ),
+            )
+            Timber.i("SOS alert inserted to Supabase")
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to insert SOS alert to Supabase -- rider may not have signal")
+        }
+    }
+
     // ─── Operational State Adaptation ─────────────────────────────────────────
 
     private fun adaptSystemsToState(state: OperationalState) {
         when (state) {
             OperationalState.FULL_TACTICAL -> {
                 Timber.i("FULL_TACTICAL: all systems active")
-                // Convoy mesh at full 1Hz -- managed by ConvoyMeshManager internally
             }
             OperationalState.SURVIVAL_MODE -> {
                 Timber.i("SURVIVAL_MODE: non-essential systems suspended")
-                meshManager.stopMesh()  // Kill Wi-Fi Direct, switch to BLE via ConvoyMeshManager
-                // GPS throttling handled by BatchedLocationManager based on OperationalState
+                meshManager.stopMesh()
             }
         }
     }
@@ -230,20 +307,18 @@ class ConvoyForegroundService : Service() {
 
     private fun buildNotification(state: OperationalState = OperationalState.FULL_TACTICAL): Notification {
         val launchIntent = PendingIntent.getActivity(
-            this,
-            0,
+            this, 0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-
-        val contentText = when (state) {
-            OperationalState.FULL_TACTICAL -> getString(R.string.notification_text_tactical)
-            OperationalState.SURVIVAL_MODE -> getString(R.string.notification_text_survival)
-        }
-
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.notification_title))
-            .setContentText(contentText)
+            .setContentText(
+                when (state) {
+                    OperationalState.FULL_TACTICAL -> getString(R.string.notification_text_tactical)
+                    OperationalState.SURVIVAL_MODE -> getString(R.string.notification_text_survival)
+                },
+            )
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(launchIntent)
             .setOngoing(true)
@@ -257,3 +332,12 @@ class ConvoyForegroundService : Service() {
             .notify(NOTIFICATION_ID, buildNotification(state))
     }
 }
+
+@Serializable
+private data class SosAlertRow(
+    val rider_id: String,
+    val convoy_id: String?,
+    val latitude: Double,
+    val longitude: Double,
+    val triggered_at_24h: String,
+)

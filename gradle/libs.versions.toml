@@ -56,6 +56,14 @@ coroutinesTest = "1.10.1"
 androidxTestCore = "1.6.1"
 composeUiTestJunit4 = "1.7.6"
 
+# QR code + camera scan
+qrose = "1.0.1"
+mlkitBarcode = "17.3.0"
+cameraX = "1.4.2"
+
+# DataStore
+datastorePreferences = "1.1.2"
+
 # Gradle plugins
 secrets = "2.0.1"
 ktlint = "12.1.2"
@@ -131,6 +139,21 @@ timber = { group = "com.jakewharton.timber", name = "timber", version.ref = "tim
 # Coroutines
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutines" }
+
+# QR code generation (compose-only, no camera permission needed)
+qrose = { group = "io.github.alexzhirkevich", name = "qrose", version.ref = "qrose" }
+
+# MLKit barcode scanning (Join Convoy QR scan)
+mlkit-barcode = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkitBarcode" }
+
+# CameraX (for QR scanning)
+camerax-core = { group = "androidx.camera", name = "camera-core", version.ref = "cameraX" }
+camerax-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "cameraX" }
+camerax-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "cameraX" }
+camerax-view = { group = "androidx.camera", name = "camera-view", version.ref = "cameraX" }
+
+# DataStore Preferences (settings persistence)
+datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastorePreferences" }
 
 # Testing
 junit-jupiter-api = { group = "org.junit.jupiter", name = "junit-jupiter-api", version.ref = "junit5" }

@@ -57,10 +57,27 @@ class ConvoyMeshManager @Inject constructor(
     var localRiderId: String = UUID.randomUUID().toString().take(8)
         private set
 
+    /** Active convoy session ID. Null when no convoy is active. */
+    var currentConvoyId: String? = null
+        private set
+
+    /** This rider's role in the active convoy. */
+    var currentRole: ConvoyRole = ConvoyRole.PACK
+        private set
+
+    /** Last known GPS position -- updated by ConvoyForegroundService broadcast loop. */
+    var lastKnownLat: Double = 0.0
+    var lastKnownLon: Double = 0.0
+
     private val _connectedRiders = MutableStateFlow<Map<String, RiderState>>(emptyMap())
 
     /** Observed by the UI layer to render convoy icons and ghost pins on MapLibre. */
     val connectedRiders: StateFlow<Map<String, RiderState>> = _connectedRiders.asStateFlow()
+
+    private val _isConvoyActive = MutableStateFlow(false)
+
+    /** True when advertising or discovery is active and at least partially connected. */
+    val isConvoyActive: StateFlow<Boolean> = _isConvoyActive.asStateFlow()
 
     private val connectedEndpointIds = mutableSetOf<String>()
 
@@ -74,6 +91,9 @@ class ConvoyMeshManager @Inject constructor(
      */
     fun startAdvertising(convoyId: String): Result<Unit> = try {
         localRiderId = UUID.randomUUID().toString().take(8)  // Rotate ID per session
+        currentConvoyId = convoyId
+        currentRole = ConvoyRole.LEADER
+        _isConvoyActive.value = true
 
         val options = AdvertisingOptions.Builder().setStrategy(strategy).build()
         nearbyClient.startAdvertising(
@@ -98,14 +118,19 @@ class ConvoyMeshManager @Inject constructor(
      *
      * @return Result indicating success or failure with cause
      */
-    fun startDiscovery(): Result<Unit> = try {
+    fun startDiscovery(convoyId: String? = null): Result<Unit> = try {
+        localRiderId = UUID.randomUUID().toString().take(8)
+        currentConvoyId = convoyId
+        currentRole = ConvoyRole.PACK
+        _isConvoyActive.value = true
+
         val options = DiscoveryOptions.Builder().setStrategy(strategy).build()
         nearbyClient.startDiscovery(
             BuildConfig.P2P_SERVICE_ID,
             endpointDiscoveryCallback,
             options,
         ).addOnSuccessListener {
-            Timber.i("Convoy discovery started")
+            Timber.i("Convoy discovery started (seeking convoyId=%s)", convoyId)
         }.addOnFailureListener { e ->
             Timber.e(e, "Convoy discovery failed")
         }
@@ -197,6 +222,8 @@ class ConvoyMeshManager @Inject constructor(
         nearbyClient.stopDiscovery()
         connectedEndpointIds.clear()
         _connectedRiders.value = emptyMap()
+        _isConvoyActive.value = false
+        currentConvoyId = null
         Timber.i("Convoy mesh stopped")
     }
 

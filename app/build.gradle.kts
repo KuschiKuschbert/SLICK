@@ -187,6 +187,19 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.orbit.test)
 
+    // QR code display (no camera permission needed -- compose only)
+    implementation(libs.qrose)
+
+    // CameraX + MLKit for Join Convoy QR scanning
+    implementation(libs.camerax.core)
+    implementation(libs.camerax.camera2)
+    implementation(libs.camerax.lifecycle)
+    implementation(libs.camerax.view)
+    implementation(libs.mlkit.barcode)
+
+    // DataStore Preferences (settings persistence)
+    implementation(libs.datastore.preferences)
+
     // Android Instrumented Tests
     androidTestImplementation(libs.androidx.test.core)
     androidTestImplementation(libs.mockk.android)

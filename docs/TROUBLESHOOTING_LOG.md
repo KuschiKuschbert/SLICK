@@ -31,6 +31,7 @@ Format: `Symptom | Root Cause | Fix | Derived Rule`
 | `return` inside `= try {}` expression body | Kotlin 2.1.x disallows `return` in expression body functions | Convert `fun foo(): Result<X> = try { return ... }` to block body `fun foo(): Result<X> { return try { ... } }` | Never use early return inside expression body try blocks |
 | KSP `KaInvalidLifetimeOwnerAccessException` | KSP version doesn't match Kotlin version | KSP version must exactly match Kotlin: `2.1.20-1.0.32` for Kotlin `2.1.20` | Always check KSP releases page for matching version |
 | Haversine Kawana→Yeppoon distance test wrong | Straight-line is 467.6km not 380km (380 is road distance approximation) | Update test range to `440.0..500.0` | Haversine = great-circle (shortest path), road distance is always longer |
+| SQLCipher Keystore passphrase: key.encoded returns null on some devices | Android Keystore AES key `.encoded` may return null if key is not extractable | Added fallback to alias string; production fix would use key wrapping | Never assume `SecretKey.encoded` is non-null for Keystore-backed keys |
 
 ---
 

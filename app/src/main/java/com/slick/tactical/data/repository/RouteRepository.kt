@@ -1,8 +1,10 @@
 package com.slick.tactical.data.repository
 
+import com.slick.tactical.data.local.dao.ShelterDao
 import com.slick.tactical.data.local.dao.WeatherNodeDao
 import com.slick.tactical.data.local.entity.WeatherNodeEntity
 import com.slick.tactical.data.remote.OpenMeteoClient
+import com.slick.tactical.data.remote.OverpassClient
 import com.slick.tactical.data.remote.ValhallRoutingClient
 import com.slick.tactical.engine.weather.Coordinate
 import com.slick.tactical.engine.weather.GripMatrix
@@ -36,7 +38,9 @@ import javax.inject.Singleton
 @Singleton
 class RouteRepository @Inject constructor(
     private val weatherNodeDao: WeatherNodeDao,
+    private val shelterDao: ShelterDao,
     private val openMeteoClient: OpenMeteoClient,
+    private val overpassClient: OverpassClient,
     private val valhallClient: ValhallRoutingClient,
     private val routeForecaster: RouteForecaster,
     private val gripMatrix: GripMatrix,
@@ -68,9 +72,28 @@ class RouteRepository @Inject constructor(
         averageSpeedKmh: Double,
         departureTime24h: String,
     ): Result<Int> = withContext(Dispatchers.IO) {
+        // Step 1: Get polyline from Valhalla
         val polyline = valhallClient.fetchRoute(origin, destination)
             .getOrElse { return@withContext Result.failure(it) }
-        syncRouteWeather(polyline, averageSpeedKmh, departureTime24h)
+
+        // Step 2: Sync weather nodes
+        val nodeCount = syncRouteWeather(polyline, averageSpeedKmh, departureTime24h)
+            .getOrElse { return@withContext Result.failure(it) }
+
+        // Step 3: Fetch emergency shelters from Overpass (best-effort, non-blocking failure)
+        val corridorId = "${origin.lat}_${origin.lon}_${destination.lat}_${destination.lon}"
+        overpassClient.fetchSheltersAlongRoute(
+            nodes = polyline.filterIndexed { i, _ -> i % 10 == 0 },  // Sample every 10th point for bbox
+            routeCorridorId = corridorId,
+        ).onSuccess { shelters ->
+            shelterDao.clearCorridor(corridorId)
+            shelterDao.insertShelters(shelters)
+            Timber.i("Overpass: %d shelters cached for corridor", shelters.size)
+        }.onFailure { e ->
+            Timber.w(e, "Overpass sync failed -- app will still work without POIs")
+        }
+
+        Result.success(nodeCount)
     }
 
     /**

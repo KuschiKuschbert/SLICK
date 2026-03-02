@@ -45,8 +45,12 @@
     <!-- Camera for convoy QR code scanning -->
     <uses-permission android:name="android.permission.CAMERA" />
 
+    <!-- Camera for QR code scanning in Convoy Lobby (Join tab) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
     <!-- Hardware features -->
     <uses-feature android:name="android.hardware.location.gps" android:required="true" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="true" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
     <uses-feature android:name="android.hardware.wifi" android:required="true" />
