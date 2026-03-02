@@ -82,6 +82,7 @@ fun InFlightHudScreen(
                     .windowInsetsPadding(WindowInsets.statusBars),
                 nextTurnDistanceM = uiState.nextTurnDistanceMetres,
                 nextTurnArrow = uiState.nextTurnArrow,
+                nextTurnInstruction = uiState.nextTurnInstruction,
                 speedKmh = uiState.speedKmh,
                 eta24h = uiState.eta24h,
                 isTablet = isTablet,
@@ -111,53 +112,86 @@ fun InFlightHudScreen(
     }
 }
 
-/** Zone 1: Pure telemetry — designed to be read with a 0.5s glance at speed. */
+/**
+ * Zone 1: Pure telemetry header.
+ *
+ * Layout (left → right):
+ * - Turn arrow + distance to maneuver (Monospace, large)
+ * - Current speed (Monospace, largest — critical at 110 km/h)
+ * - ETA (Monospace, smaller secondary)
+ *
+ * A second micro-row below shows the next maneuver instruction text (e.g., "Turn right onto
+ * Bruce Highway") in smaller grey text — readable as a secondary glance.
+ */
 @Composable
 fun Zone1Header(
     modifier: Modifier = Modifier,
     nextTurnDistanceM: Int,
     nextTurnArrow: String,
+    nextTurnInstruction: String = "Follow route",
     speedKmh: Double,
     eta24h: String,
     isTablet: Boolean = false,
 ) {
-    val baseFontSize = if (isTablet) 34 else 28
+    val arrowFontSize = if (isTablet) 34 else 28
     val speedFontSize = if (isTablet) 40 else 32
-    val etaFontSize = if (isTablet) 26 else 20
+    val etaFontSize = if (isTablet) 24 else 18
+    val instrFontSize = if (isTablet) 14 else 12
+    val distanceText = when {
+        nextTurnDistanceM >= 1000 -> "${"%.1f".format(nextTurnDistanceM / 1000.0)} km"
+        else -> "${nextTurnDistanceM} m"
+    }
 
-    Row(
+    androidx.compose.foundation.layout.Column(
         modifier = modifier
             .background(SlickColors.Void)
-            .padding(horizontal = if (isTablet) 32.dp else 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(horizontal = if (isTablet) 32.dp else 16.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.SpaceEvenly,
     ) {
-        // Next turn: directional arrow + distance
-        Text(
-            text = "$nextTurnArrow  ${nextTurnDistanceM}m",
-            color = SlickColors.DataPrimary,
-            fontSize = baseFontSize.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold,
-        )
+        // Primary row: arrow + distance | speed | ETA
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Turn arrow + distance to maneuver
+            Text(
+                text = "$nextTurnArrow  $distanceText",
+                color = SlickColors.DataPrimary,
+                fontSize = arrowFontSize.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+            )
 
-        // Speed: largest element — most critical at speed
-        Text(
-            text = "${speedKmh.toInt()} km/h",
-            color = SlickColors.DataPrimary,
-            fontSize = speedFontSize.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-        )
+            // Speed — most prominent number on screen
+            Text(
+                text = "${speedKmh.toInt()} km/h",
+                color = SlickColors.DataPrimary,
+                fontSize = speedFontSize.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+            )
 
-        // ETA: strict 24h format, no AM/PM
-        Text(
-            text = "ETA $eta24h",
-            color = SlickColors.DataSecondary,
-            fontSize = etaFontSize.sp,
-            fontFamily = FontFamily.Monospace,
-        )
+            // Strict 24h ETA
+            Text(
+                text = "ETA $eta24h",
+                color = SlickColors.DataSecondary,
+                fontSize = etaFontSize.sp,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+
+        // Secondary row: full turn instruction text (glanceable, not safety-critical)
+        if (nextTurnInstruction.isNotBlank() && nextTurnInstruction != "Follow route") {
+            Text(
+                text = nextTurnInstruction,
+                color = SlickColors.DataSecondary,
+                fontSize = instrFontSize.sp,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -170,6 +204,7 @@ fun Zone2MapWrapper(
     val state by viewModel.state.collectAsState()
     Zone2Map(
         modifier = modifier,
+        navState = state.navState,
         weatherNodes = state.weatherNodes,
         riderLat = state.riderLat,
         riderLon = state.riderLon,

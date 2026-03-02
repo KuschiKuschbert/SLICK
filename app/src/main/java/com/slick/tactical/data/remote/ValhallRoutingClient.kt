@@ -1,6 +1,8 @@
 package com.slick.tactical.data.remote
 
 import com.slick.tactical.BuildConfig
+import com.slick.tactical.engine.navigation.RouteManeuver
+import com.slick.tactical.engine.navigation.RouteResult
 import com.slick.tactical.engine.weather.Coordinate
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -16,16 +18,15 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Fetches a motorcycle route polyline from the Valhalla open-source routing engine.
+ * Fetches a motorcycle route from the Valhalla open-source routing engine.
  *
  * Endpoint: [BuildConfig.VALHALLA_BASE_URL]/route
  * Costing profile: "motorcycle" (respects road types appropriate for bikes)
  *
- * The returned polyline is a list of GPS [Coordinate] objects sliced by
- * [com.slick.tactical.engine.weather.RouteForecaster] into 10km GripMatrix nodes.
- *
- * Valhalla returns routes as an encoded polyline6 string. We decode it here
- * and return raw [Coordinate] objects -- no encoding dependency needed.
+ * Returns [RouteResult] containing:
+ * - Full road-following polyline (decoded polyline6, ~1 point per 20m)
+ * - Turn-by-turn maneuvers with shape indices for navigation tracking
+ * - Total distance and estimated travel time
  */
 @Singleton
 class ValhallRoutingClient @Inject constructor(
@@ -33,52 +34,75 @@ class ValhallRoutingClient @Inject constructor(
 ) {
 
     /**
-     * Fetches a route polyline between [origin] and [destination], with an optional [waypoint].
+     * Fetches a complete route including road-following polyline and turn-by-turn maneuvers.
      *
-     * @param origin Start coordinate
-     * @param destination End coordinate
-     * @param waypoint Optional intermediate stop (via point)
-     * @return Result containing ordered list of [Coordinate] points
+     * @param origin Start coordinate (e.g., Kawana)
+     * @param destination End coordinate (e.g., Yeppoon)
+     * @param waypoint Optional intermediate stop for detour ETA calculation
+     * @return Result containing [RouteResult] with polyline + maneuvers, or failure
      */
     suspend fun fetchRoute(
         origin: Coordinate,
         destination: Coordinate,
         waypoint: Coordinate? = null,
-    ): Result<List<Coordinate>> {
+    ): Result<RouteResult> {
         return try {
             val requestBody = buildValhallRequest(origin, destination, waypoint)
-
             val response = httpClient.post("${BuildConfig.VALHALLA_BASE_URL}/route") {
                 contentType(ContentType.Application.Json)
                 setBody(requestBody)
             }
-
             val routeResponse = response.body<ValhallRouteResponse>()
+            val legs = routeResponse.trip.legs
+            if (legs.isEmpty()) return Result.failure(Exception("Valhalla returned empty route legs"))
 
-            if (routeResponse.trip.legs.isEmpty()) {
-                return Result.failure(Exception("Valhalla returned empty route legs"))
+            var shapeIndexOffset = 0
+            val allCoordinates = mutableListOf<Coordinate>()
+            val allManeuvers = mutableListOf<RouteManeuver>()
+
+            for (leg in legs) {
+                val legPoints = decodePolyline6(leg.shape)
+                allCoordinates.addAll(legPoints)
+                for (m in leg.maneuvers) {
+                    allManeuvers.add(RouteManeuver(
+                        type = m.type,
+                        instruction = m.instruction,
+                        distanceKm = m.length,
+                        timeSeconds = m.time,
+                        beginShapeIndex = m.beginShapeIndex + shapeIndexOffset,
+                    ))
+                }
+                shapeIndexOffset += legPoints.size
             }
 
-            // Combine all leg shapes for multi-leg routes (when waypoint is provided)
-            val allCoordinates = routeResponse.trip.legs.flatMap { leg ->
-                decodePolyline6(leg.shape)
-            }
+            if (allCoordinates.isEmpty()) return Result.failure(Exception("Decoded polyline is empty"))
 
-            if (allCoordinates.isEmpty()) {
-                return Result.failure(Exception("Decoded polyline is empty"))
-            }
+            Timber.i("Valhalla route: %d pts, %d maneuvers, %.1f km, %.0f min",
+                allCoordinates.size, allManeuvers.size,
+                routeResponse.trip.summary.length, routeResponse.trip.summary.time / 60.0)
 
-            Timber.d("Valhalla route (waypoint=%s): %d points, %.1f km",
-                waypoint?.let { "(%.4f,%.4f)".format(it.lat, it.lon) } ?: "none",
-                allCoordinates.size,
-                routeResponse.trip.summary.length)
-
-            Result.success(allCoordinates)
+            Result.success(RouteResult(
+                polyline = allCoordinates,
+                maneuvers = allManeuvers,
+                totalDistanceKm = routeResponse.trip.summary.length,
+                totalTimeSeconds = routeResponse.trip.summary.time,
+            ))
         } catch (e: Exception) {
-            Timber.e(e, "Valhalla routing failed (waypoint)")
+            Timber.w(e, "Valhalla routing failed -- will use straight-line fallback")
             Result.failure(Exception("Route fetch failed: ${e.localizedMessage}", e))
         }
     }
+
+    /**
+     * Convenience overload that returns only the polyline coordinates.
+     * Used by [DetourManager] for ETA impact calculation.
+     */
+    suspend fun fetchRoutePolyline(
+        origin: Coordinate,
+        destination: Coordinate,
+        waypoint: Coordinate? = null,
+    ): Result<List<Coordinate>> = fetchRoute(origin, destination, waypoint)
+        .map { it.polyline }
 
     private fun buildValhallRequest(
         origin: Coordinate,
@@ -104,13 +128,7 @@ class ValhallRoutingClient @Inject constructor(
 
     /**
      * Decodes a Valhalla polyline6 encoded string into GPS coordinates.
-     *
-     * Valhalla uses polyline6 encoding (6 decimal places = ~10cm precision).
-     * Standard Google polyline5 uses 5 decimal places (~1m precision).
-     * The precision multiplier for polyline6 is 1e6 instead of 1e5.
-     *
-     * @param encoded Valhalla polyline6 encoded string
-     * @return List of [Coordinate] objects in route order
+     * Polyline6 uses 6 decimal places (10cm precision) vs Google's polyline5 (1m precision).
      */
     fun decodePolyline6(encoded: String): List<Coordinate> {
         val coordinates = mutableListOf<Coordinate>()
@@ -119,7 +137,6 @@ class ValhallRoutingClient @Inject constructor(
         var lng = 0
 
         while (index < encoded.length) {
-            // Decode latitude
             var result = 0
             var shift = 0
             var b: Int
@@ -131,7 +148,6 @@ class ValhallRoutingClient @Inject constructor(
             val dlat = if (result and 1 != 0) (result shr 1).inv() else result shr 1
             lat += dlat
 
-            // Decode longitude
             result = 0
             shift = 0
             do {
@@ -142,10 +158,8 @@ class ValhallRoutingClient @Inject constructor(
             val dlng = if (result and 1 != 0) (result shr 1).inv() else result shr 1
             lng += dlng
 
-            // Polyline6: divide by 1e6 for 6 decimal places
             coordinates.add(Coordinate(lat = lat / 1e6, lon = lng / 1e6))
         }
-
         return coordinates
     }
 }
@@ -184,8 +198,20 @@ data class ValhallTrip(
 
 @Serializable
 data class ValhallLeg(
-    val shape: String,  // Polyline6 encoded string
+    val shape: String,
     val summary: ValhallSummary,
+    val maneuvers: List<ValhallManeuver> = emptyList(),
+)
+
+@Serializable
+data class ValhallManeuver(
+    val type: Int = 0,
+    val instruction: String = "",
+    val length: Double = 0.0,        // km to next maneuver
+    val time: Int = 0,               // seconds to next maneuver
+    @SerialName("begin_shape_index") val beginShapeIndex: Int = 0,
+    @SerialName("end_shape_index") val endShapeIndex: Int = 0,
+    @SerialName("street_names") val streetNames: List<String> = emptyList(),
 )
 
 @Serializable

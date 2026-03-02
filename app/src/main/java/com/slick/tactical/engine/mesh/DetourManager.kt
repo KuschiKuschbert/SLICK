@@ -218,9 +218,8 @@ class DetourManager @Inject constructor(
             val stop = Coordinate(stopLat, stopLon)
             val nextDest = Coordinate(nextDestLat, nextDestLon)
 
-            // Fetch both routes in parallel using coroutines (but we're already in IO)
-            val directRoute = valhallClient.fetchRoute(current, nextDest)
-            val detourRoute = valhallClient.fetchRoute(current, nextDest, waypoint = stop)
+            val directRoute = valhallClient.fetchRoutePolyline(current, nextDest)
+            val detourRoute = valhallClient.fetchRoutePolyline(current, nextDest, waypoint = stop)
 
             val directMinutes = directRoute.getOrNull()?.let { estimateMinutes(it) } ?: return 0
             val detourMinutes = detourRoute.getOrNull()?.let { estimateMinutes(it) } ?: return 0

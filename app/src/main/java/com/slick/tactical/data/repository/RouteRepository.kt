@@ -6,6 +6,7 @@ import com.slick.tactical.data.local.entity.WeatherNodeEntity
 import com.slick.tactical.data.remote.OpenMeteoClient
 import com.slick.tactical.data.remote.OverpassClient
 import com.slick.tactical.data.remote.ValhallRoutingClient
+import com.slick.tactical.engine.navigation.RouteStateHolder
 import com.slick.tactical.engine.weather.Coordinate
 import com.slick.tactical.engine.weather.GripMatrix
 import com.slick.tactical.engine.weather.RouteForecaster
@@ -45,6 +46,7 @@ class RouteRepository @Inject constructor(
     private val gripMatrix: GripMatrix,
     private val twilightMatrix: TwilightMatrix,
     private val solarGlareVector: SolarGlareVector,
+    private val routeStateHolder: RouteStateHolder,
 ) {
 
     /** Observed by the UI. Emits updated node list whenever Room changes. */
@@ -64,14 +66,34 @@ class RouteRepository @Inject constructor(
         averageSpeedKmh: Double,
         departureTime24h: String,
     ): Result<Int> = withContext(Dispatchers.IO) {
-        // Step 1: Get polyline from Valhalla (with fallback)
-        val polyline = valhallClient.fetchRoute(origin, destination)
-            .getOrElse { e ->
-                Timber.w(e, "Valhalla unavailable -- falling back to straight-line route generation")
-                generateStraightLinePoints(origin, destination)
-            }
+        // Step 1: Get route from Valhalla (polyline + maneuvers), with straight-line fallback
+        val valhallResult = valhallClient.fetchRoute(origin, destination)
+        val polyline: List<Coordinate>
+        val maneuvers: List<com.slick.tactical.engine.navigation.RouteManeuver>
+        val totalDistanceKm: Double
 
-        Timber.i("Route polyline: %d points (Kawana→Yeppoon would be ~450+)", polyline.size)
+        if (valhallResult.isSuccess) {
+            val r = valhallResult.getOrThrow()
+            polyline = r.polyline
+            maneuvers = r.maneuvers
+            totalDistanceKm = r.totalDistanceKm
+        } else {
+            Timber.w(valhallResult.exceptionOrNull(), "Valhalla unavailable -- straight-line fallback")
+            polyline = generateStraightLinePoints(origin, destination)
+            maneuvers = emptyList()
+            totalDistanceKm = 0.0
+        }
+
+        // Publish full route to RouteStateHolder -- drives Zone2Map polyline + navigation
+        routeStateHolder.setRoute(
+            polyline = polyline,
+            maneuvers = maneuvers,
+            origin = origin,
+            destination = destination,
+            totalDistanceKm = totalDistanceKm,
+        )
+
+        Timber.i("Route: %d polyline pts, %d maneuvers", polyline.size, maneuvers.size)
 
         // Step 2: Sync weather nodes
         val nodeCount = syncRouteWeather(polyline, averageSpeedKmh, departureTime24h)
