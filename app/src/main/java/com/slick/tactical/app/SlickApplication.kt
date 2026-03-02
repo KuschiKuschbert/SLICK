@@ -3,22 +3,81 @@ package com.slick.tactical.app
 import android.app.Application
 import com.slick.tactical.BuildConfig
 import dagger.hilt.android.HiltAndroidApp
+import io.sentry.android.core.SentryAndroid
 import timber.log.Timber
 
 /**
- * Application entry point. Initializes Hilt DI and Timber logging.
+ * Application entry point. Initialises Hilt DI, Sentry crash reporting, and Timber logging.
  *
- * Timber is only planted for debug builds -- release builds have no logging
- * to prevent PII exposure via logcat.
+ * Logging strategy by build type:
+ * ┌─────────────────────────────────────────────────────────────────────┐
+ * │  Build      │ Timber            │ Sentry      │ Min level to Sentry │
+ * ├─────────────────────────────────────────────────────────────────────┤
+ * │  debug      │ DebugTree (all)   │ disabled    │ n/a                 │
+ * │  staging    │ DebugTree (all)   │ enabled     │ WARN+               │
+ * │  release    │ SlickCrashTree    │ enabled     │ WARN+               │
+ * └─────────────────────────────────────────────────────────────────────┘
+ *
+ * Security guarantees:
+ * - DEBUG / INFO logs never leave the device (Timber.d, Timber.i are no-ops in release)
+ * - All messages routed to Sentry are GPS-sanitised by [SlickCrashTree] before transmission
+ * - Sentry is initialised with PII collection disabled (no IP addresses, no device names)
  */
 @HiltAndroidApp
 class SlickApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        initialiseSentry()
+        initialiseTimber()
+
+        Timber.i("SLICK initialised. Build=%s, crashReporting=%s",
+            BuildConfig.BUILD_TYPE, BuildConfig.ENABLE_CRASH_REPORTING)
+    }
+
+    private fun initialiseSentry() {
+        if (!BuildConfig.ENABLE_CRASH_REPORTING) return
+
+        // SENTRY_DSN is excluded from BuildConfig via secrets.ignoreList to avoid empty-value
+        // compile errors. Read it from a resource string at runtime instead.
+        // For now, the DSN is read from BuildConfig if set via a build variant workaround,
+        // or passed via a manifest meta-data tag (which Sentry auto-reads on Android).
+        SentryAndroid.init(this) { options ->
+            // DSN is auto-read from AndroidManifest.xml meta-data tag "io.sentry.dsn"
+            // if set there, or you can set it explicitly:
+            // options.dsn = "https://YOUR_KEY@de.sentry.io/YOUR_PROJECT_ID"
+
+            options.isEnabled = true
+            options.environment = BuildConfig.BUILD_TYPE   // "release", "staging"
+            options.release = "slick@${BuildConfig.VERSION_NAME}"
+
+            // PII OFF: never collect IP addresses or device names
+            options.isSendDefaultPii = false
+
+            // ANR detection: catch Application Not Responding events
+            options.isAnrEnabled = true
+            options.anrTimeoutIntervalMillis = 5_000L
+
+            // Performance: minimal overhead -- only capture errors, no transactions
+            options.tracesSampleRate = 0.0  // No performance monitoring (battery cost)
+
+            // Session tracking: know how many crashes vs total sessions
+            options.isEnableAutoSessionTracking = true
+
+            Timber.d("Sentry initialised for %s build", BuildConfig.BUILD_TYPE)
+        }
+    }
+
+    private fun initialiseTimber() {
         if (BuildConfig.ENABLE_DEBUG_LOGGING) {
+            // Debug/Staging: full verbose logging with file and line number
             Timber.plant(Timber.DebugTree())
         }
-        Timber.d("SLICK initialized. Tactical mode ready.")
+
+        if (BuildConfig.ENABLE_CRASH_REPORTING) {
+            // Staging/Release: route WARN+ to Sentry with PII scrubbing
+            Timber.plant(SlickCrashTree())
+        }
     }
 }

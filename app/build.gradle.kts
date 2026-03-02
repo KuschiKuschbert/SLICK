@@ -28,18 +28,33 @@ android {
     }
 
     buildTypes {
+        // ── Production release ────────────────────────────────────────────────
         release {
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // Release builds must not contain debug logging
             buildConfigField("boolean", "ENABLE_DEBUG_LOGGING", "false")
+            buildConfigField("boolean", "ENABLE_CRASH_REPORTING", "true")
         }
+
+        // ── Staging / internal testing ────────────────────────────────────────
+        // Like release (minified) but with verbose Timber logs AND crash reporting.
+        // Use for TestFlight-equivalent builds given to test riders.
+        create("staging") {
+            initWith(getByName("release"))
+            isMinifyEnabled = false
+            buildConfigField("boolean", "ENABLE_DEBUG_LOGGING", "true")
+            buildConfigField("boolean", "ENABLE_CRASH_REPORTING", "true")
+            versionNameSuffix = "-staging"
+        }
+
+        // ── Local debug ───────────────────────────────────────────────────────
         debug {
             isDebuggable = true
             buildConfigField("boolean", "ENABLE_DEBUG_LOGGING", "true")
+            buildConfigField("boolean", "ENABLE_CRASH_REPORTING", "false")
         }
     }
 
@@ -104,6 +119,10 @@ secrets {
     ignoreList.add("sdk.dir")
     // OPEN_METEO_API_KEY is empty on the free tier -- exclude from BuildConfig to avoid empty value compile errors
     ignoreList.add("OPEN_METEO_API_KEY")
+    // MAP_STYLE_URL may be the asset:// scheme which the plugin strips -- exclude it
+    ignoreList.add("MAP_STYLE_URL")
+    // SENTRY_DSN may be empty in development -- exclude to avoid compile errors
+    ignoreList.add("SENTRY_DSN")
 }
 
 dependencies {
@@ -171,8 +190,12 @@ dependencies {
     // WorkManager (GarageSyncWorker for PMTiles updates)
     implementation(libs.work.runtime.ktx)
 
-    // Logging
+    // Logging + Crash Reporting
     implementation(libs.timber)
+    implementation(libs.sentry.android)
+
+    // QR code generation (ZXing core -- pure Java, no KMP, works everywhere)
+    implementation(libs.zxing.core)
 
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
@@ -187,8 +210,7 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.orbit.test)
 
-    // QR code display (no camera permission needed -- compose only)
-    implementation(libs.qrose)
+    // qrose removed: KMP library incompatible with pure Android project. QR uses ZXing core.
 
     // CameraX + MLKit for Join Convoy QR scanning
     implementation(libs.camerax.core)

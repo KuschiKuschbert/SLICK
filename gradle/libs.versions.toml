@@ -42,8 +42,12 @@ securityCrypto = "1.1.0-alpha06"
 # WorkManager
 workRuntimeKtx = "2.10.0"
 
-# Logging
+# Logging + Crash Reporting
 timber = "5.0.1"
+sentry = "7.20.0"
+
+# QR code (ZXing -- pure Java, no KMP dependency)
+zxing = "3.5.3"
 
 # Coroutines
 coroutines = "1.10.1"
@@ -135,13 +139,16 @@ work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version
 
 # Logging
 timber = { group = "com.jakewharton.timber", name = "timber", version.ref = "timber" }
+sentry-android = { group = "io.sentry", name = "sentry-android", version.ref = "sentry" }
+
+# QR code generation (ZXing core -- pure Java, no camera permission needed)
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 
 # Coroutines
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutines" }
 
-# QR code generation (compose-only, no camera permission needed)
-qrose = { group = "io.github.alexzhirkevich", name = "qrose", version.ref = "qrose" }
+# qrose removed: KMP library incompatible with pure Android project -- replaced by ZXing
 
 # MLKit barcode scanning (Join Convoy QR scan)
 mlkit-barcode = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkitBarcode" }

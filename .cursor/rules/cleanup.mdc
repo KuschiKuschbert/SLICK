@@ -43,21 +43,71 @@ val baseUrl = BuildConfig.OPEN_METEO_BASE_URL
 val serviceId = BuildConfig.P2P_SERVICE_ID
 ```
 
-## Timber Only -- No Raw Logging
+## Logging Standards (Timber Only)
 
+### Banned — never use these:
 ```kotlin
-// ❌ BANNED everywhere
-Log.d("TAG", "message")
-Log.e("TAG", "error", exception)
-println("debug info")
-System.out.println("something")
-
-// ✅ REQUIRED
-Timber.d("Node loaded: %s", nodeId)
-Timber.e(exception, "Sync failed for convoy: %s", convoyId)
+Log.d("TAG", "message")     // ❌ raw Android log
+Log.e("TAG", "error", e)    // ❌ raw Android log
+println("debug info")       // ❌
+System.out.println(...)     // ❌
 ```
 
-Timber is initialized in `SlickApplication.onCreate()` for debug builds only.
+### Required — Timber only:
+```kotlin
+Timber.d("Node loaded: %s nodeId=%s", nodeType, nodeId)   // ✅
+Timber.e(exception, "Sync failed: %s", reason)             // ✅
+```
+
+### Timber Level Guidelines
+
+| Level | When to use | Example | Reaches Sentry? |
+|-------|-------------|---------|-----------------|
+| `Timber.v()` | Sensor frame-by-frame data (very noisy, dev only) | IMU sample value | Never |
+| `Timber.d()` | Fine-grained lifecycle and state changes | GPS batch received, node sliced | Never |
+| `Timber.i()` | System lifecycle milestones | Service started, sync complete, convoy joined | Never |
+| `Timber.w()` | Recoverable issues, fallback paths used | Valhalla unavailable, API fallback used | **Yes (staging + release)** |
+| `Timber.e()` | Errors that degrade functionality | Crash detection failed, DB insert failed | **Yes (all builds with crash reporting)** |
+
+**Rule: if in doubt, use `Timber.w()` not `Timber.e()`.**  
+`Timber.e()` means "user noticed something broken." `Timber.w()` means "we handled it gracefully."
+
+### PII Rules — Mandatory
+
+These fields MUST NEVER appear in any `Timber.w()` or `Timber.e()` call:
+
+```kotlin
+// ❌ BANNED in WARN/ERROR logs
+Timber.e("GPS error at lat=%.4f lon=%.4f", location.lat, location.lon)
+Timber.w("Rider %s dropped out", fullRiderName)
+
+// ✅ ALLOWED -- anonymised, no coordinates, no real IDs
+Timber.e("GPS error at [GPS_REDACTED]")
+Timber.w("Rider [id=%s] dropped out", shortEphemeralId.take(4))
+Timber.i("GPS fix: %.4f, %.4f", lat, lon)  // INFO never reaches Sentry -- safe
+```
+
+`SlickCrashTree` applies regex scrubbing to GPS coordinates and rider IDs before any message
+reaches Sentry, but defence-in-depth requires you to NOT include them in the first place.
+
+### Build Type → Logging Matrix
+
+| Build | `ENABLE_DEBUG_LOGGING` | `ENABLE_CRASH_REPORTING` | Timber trees active |
+|-------|------------------------|--------------------------|---------------------|
+| `debug` | true | false | `DebugTree` (all levels, file + line) |
+| `staging` | true | true | `DebugTree` + `SlickCrashTree` |
+| `release` | false | true | `SlickCrashTree` only (WARN+ to Sentry) |
+
+### Sentry Crash Reporting
+
+Sentry is initialised in `SlickApplication.initialiseSentry()`.  
+DSN is set in `local.properties` (`SENTRY_DSN=`).  
+Create an Android project at https://kuschmierz.sentry.io to get the DSN.
+
+Configuration in `SlickApplication`:
+- `isSendDefaultPii = false` — no IP addresses, no device names
+- `tracesSampleRate = 0.0` — performance monitoring disabled (battery cost)
+- `isAnrEnabled = true` — catches Application Not Responding events
 
 ## KDoc on All Public Functions
 

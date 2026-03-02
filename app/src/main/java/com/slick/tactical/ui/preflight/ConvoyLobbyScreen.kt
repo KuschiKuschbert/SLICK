@@ -52,12 +52,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.foundation.Image
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
-import io.github.alexzhirkevich.qrose.rememberQrCodePainter
-import androidx.compose.foundation.Image
 import com.slick.tactical.ui.theme.SlickColors
+import com.slick.tactical.util.rememberQrCode
 
 /**
  * Convoy Lobby screen -- Create or Join a convoy.
@@ -189,15 +189,25 @@ private fun CreateConvoyTab(
                 letterSpacing = 8.sp,
             )
 
-            // QR code (compose-only, no camera permission needed)
-            val qrPainter = rememberQrCodePainter(data = state.convoyCode)
-            Image(
-                painter = qrPainter,
-                contentDescription = "Convoy QR Code",
-                modifier = Modifier
-                    .size(200.dp)
-                    .border(2.dp, SlickColors.DataSecondary),
-            )
+            // QR code: ZXing generates a bitmap, displayed as an ImageBitmap.
+            // White background is mandatory -- QR scanners need module contrast.
+            val qrBitmap = rememberQrCode(data = state.convoyCode, sizePx = 512)
+            if (qrBitmap != null) {
+                Image(
+                    bitmap = qrBitmap,
+                    contentDescription = "Convoy QR Code — scan to join ${state.convoyCode}",
+                    modifier = Modifier
+                        .size(200.dp)
+                        .border(2.dp, SlickColors.DataSecondary),
+                )
+            } else {
+                // Should never happen with a valid 6-char code, but guard gracefully
+                Text(
+                    text = "QR generation failed — share code verbally",
+                    color = SlickColors.DataSecondary,
+                    fontSize = 12.sp,
+                )
+            }
 
             Text(
                 text = "Advertising as Lead · ${state.connectedCount} riders joined",
