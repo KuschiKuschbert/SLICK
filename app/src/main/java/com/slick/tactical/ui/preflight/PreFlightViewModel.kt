@@ -1,7 +1,9 @@
 package com.slick.tactical.ui.preflight
 
+import android.annotation.SuppressLint
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.android.gms.location.FusedLocationProviderClient
 import com.slick.tactical.data.repository.RouteRepository
 import com.slick.tactical.engine.weather.Coordinate
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -9,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import timber.log.Timber
 import javax.inject.Inject
 
@@ -41,10 +44,19 @@ data class PreFlightUiState(
  *
  * Weather sync pipeline: Valhalla routing → Haversine node slicing → Open-Meteo → Room DB
  */
+data class LocationFetchState(
+    val isFetching: Boolean = false,
+    val error: String? = null,
+)
+
 @HiltViewModel
 class PreFlightViewModel @Inject constructor(
     private val routeRepository: RouteRepository,
+    private val fusedLocationClient: FusedLocationProviderClient,
 ) : ViewModel() {
+
+    private val _locationFetchState = MutableStateFlow(LocationFetchState())
+    val locationFetchState: StateFlow<LocationFetchState> = _locationFetchState.asStateFlow()
 
     private val _state = MutableStateFlow(PreFlightUiState())
     val state: StateFlow<PreFlightUiState> = _state.asStateFlow()
@@ -91,6 +103,52 @@ class PreFlightViewModel @Inject constructor(
 
     fun onDepartureTimeChanged(value: String) {
         _state.value = _state.value.copy(departureTime24h = value)
+    }
+
+    // ─── Current location ────────────────────────────────────────────────────
+
+    /**
+     * Fetches the device's last known GPS position and sets it as the route origin.
+     *
+     * Uses [FusedLocationProviderClient.lastLocation] which returns instantly from cache
+     * (no GPS warm-up time). Falls back to [FusedLocationProviderClient.getCurrentLocation]
+     * if lastLocation is null (device hasn't had a fix recently).
+     *
+     * Caller is responsible for verifying location permission before calling this.
+     * If permission is not granted, the call is a no-op (GPS not accessed).
+     */
+    @SuppressLint("MissingPermission")
+    fun fetchCurrentLocation() {
+        viewModelScope.launch {
+            _locationFetchState.value = LocationFetchState(isFetching = true)
+            try {
+                // Try cached last location first (instant, no power cost)
+                var location = fusedLocationClient.lastLocation.await()
+
+                // If null (device has no recent fix), request a fresh single fix
+                if (location == null) {
+                    Timber.d("Last location null -- requesting current location")
+                    val request = com.google.android.gms.location.CurrentLocationRequest.Builder()
+                        .setPriority(com.google.android.gms.location.Priority.PRIORITY_BALANCED_POWER_ACCURACY)
+                        .setMaxUpdateAgeMillis(60_000L)  // Accept fix up to 60s old
+                        .build()
+                    location = fusedLocationClient.getCurrentLocation(request, null).await()
+                }
+
+                if (location != null) {
+                    val displayName = "My Location (%.4f, %.4f)".format(location.latitude, location.longitude)
+                    onOriginSelected(displayName, location.latitude, location.longitude)
+                    _locationFetchState.value = LocationFetchState()
+                    Timber.i("Current location set as origin: %.4f, %.4f", location.latitude, location.longitude)
+                } else {
+                    _locationFetchState.value = LocationFetchState(error = "No GPS fix available")
+                    Timber.w("Could not get current location -- no fix available")
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "fetchCurrentLocation failed")
+                _locationFetchState.value = LocationFetchState(error = "Location unavailable: ${e.localizedMessage}")
+            }
+        }
     }
 
     // ─── Weather sync pipeline ──────────────────────────────────────────────

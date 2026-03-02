@@ -1,5 +1,9 @@
 package com.slick.tactical.ui.preflight
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,12 +13,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -30,6 +36,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.platform.LocalContext
 import com.slick.tactical.ui.components.PlaceSearchBar
 import com.slick.tactical.ui.theme.SlickColors
 
@@ -50,6 +57,14 @@ fun RouteConfigContent(
     viewModel: PreFlightViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val locationFetchState by viewModel.locationFetchState.collectAsState()
+    val context = LocalContext.current
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) viewModel.fetchCurrentLocation()
+    }
 
     Column(
         modifier = Modifier
@@ -75,7 +90,41 @@ fun RouteConfigContent(
         Spacer(modifier = Modifier.height(4.dp))
 
         // ── Origin search ────────────────────────────────────────────────────
-        SectionLabel("ORIGIN")
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            SectionLabel("ORIGIN")
+            OutlinedButton(
+                onClick = {
+                    val hasPermission = context.checkSelfPermission(
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                    ) == PackageManager.PERMISSION_GRANTED
+                    if (hasPermission) {
+                        viewModel.fetchCurrentLocation()
+                    } else {
+                        locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                    }
+                },
+                enabled = !locationFetchState.isFetching,
+                colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                    contentColor = SlickColors.Wash,
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, SlickColors.Wash),
+                modifier = Modifier.height(32.dp),
+            ) {
+                if (locationFetchState.isFetching) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = SlickColors.Wash,
+                    )
+                } else {
+                    Text("📍 MY LOCATION", fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                }
+            }
+        }
         PlaceSearchBar(
             label = "Departure town or city",
             query = state.originQuery,
@@ -84,6 +133,13 @@ fun RouteConfigContent(
             modifier = Modifier.fillMaxWidth(),
         )
         CoordinateReadout(lat = state.originLat, lon = state.originLon)
+        if (locationFetchState.error != null) {
+            Text(
+                text = locationFetchState.error!!,
+                color = SlickColors.Alert,
+                fontSize = 11.sp,
+            )
+        }
 
         // ── Destination search ───────────────────────────────────────────────
         SectionLabel("DESTINATION")

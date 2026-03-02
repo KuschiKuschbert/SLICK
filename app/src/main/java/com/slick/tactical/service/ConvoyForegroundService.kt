@@ -17,6 +17,7 @@ import com.slick.tactical.engine.imu.CrashDetectionManager
 import com.slick.tactical.engine.imu.SosState
 import com.slick.tactical.engine.location.ActivityRecognitionManager
 import com.slick.tactical.engine.location.BatchedLocationManager
+import com.slick.tactical.engine.location.GpsStateHolder
 import com.slick.tactical.engine.mesh.ConvoyMeshManager
 import com.slick.tactical.engine.mesh.ConvoyOptimizationManager
 import com.slick.tactical.engine.mesh.ConvoyRole
@@ -58,6 +59,7 @@ class ConvoyForegroundService : Service() {
     @Inject lateinit var batterySurvivalManager: BatterySurvivalManager
     @Inject lateinit var healthManager: DeviceHealthManager
     @Inject lateinit var locationManager: BatchedLocationManager
+    @Inject lateinit var gpsStateHolder: GpsStateHolder
     @Inject lateinit var crashDetectionManager: CrashDetectionManager
     @Inject lateinit var audioRouteManager: AudioRouteManager
     @Inject lateinit var meshManager: ConvoyMeshManager
@@ -177,6 +179,14 @@ class ConvoyForegroundService : Service() {
             batterySurvivalManager.systemState.collectLatest { operationalState ->
                 locationManager.locationFlow(operationalState).collect { location ->
                     val speedKmh = location.speed * 3.6
+
+                    // Publish GPS to the shared state holder so InFlightViewModel can observe it
+                    gpsStateHolder.update(
+                        lat = location.latitude,
+                        lon = location.longitude,
+                        speedKmh = speedKmh,
+                        bearingDeg = if (location.hasBearing()) location.bearing else 0f,
+                    )
 
                     // Update mesh manager with latest position for broadcast loop
                     meshManager.lastKnownLat = location.latitude

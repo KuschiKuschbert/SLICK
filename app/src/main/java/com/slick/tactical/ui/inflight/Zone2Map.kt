@@ -43,7 +43,7 @@ import java.io.File
  * Style resolution order:
  * 1. Local PMTiles file on device (fully offline, populated by GarageSyncWorker)
  * 2. Protomaps CDN (online fallback using BuildConfig.PMTILES_URL if set)
- * 3. Embedded asset style (always available, no tile data)
+ * 3. OpenFreeMap dark style (free online tiles, no API key required)
  *
  * The style JSON is embedded in assets/tactical-oled-style.json and can be loaded
  * without any network connection. The PMTiles URL is injected at runtime via the
@@ -162,10 +162,12 @@ fun resolveMapStyle(context: android.content.Context): String {
             buildStyleWithPmtilesUrl(context, "pmtiles://${BuildConfig.PMTILES_URL}")
         }
 
-        // Priority 3: asset style only (no tiles -- background + labels render, no roads)
+        // Priority 3: OpenFreeMap dark tiles (free, no API key, global coverage)
+        // Tile data loads from network. GripMatrix polyline still renders on top locally.
+        // Download QLD PMTiles via GarageSyncWorker to go fully offline.
         else -> {
-            Timber.w("Zone2Map: no PMTiles configured, using asset style without tile data")
-            "asset://tactical-oled-style.json"
+            Timber.w("Zone2Map: no PMTiles configured, using OpenFreeMap dark tiles (online)")
+            "https://tiles.openfreemap.org/styles/dark"
         }
     }
 }

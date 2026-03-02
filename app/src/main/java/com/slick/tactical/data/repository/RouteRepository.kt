@@ -19,21 +19,20 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.ceil
 
 /**
  * Offline-first weather data repository.
  *
- * The UI always reads from [WeatherNodeDao] via the [observeNodes] Flow.
+ * The UI always reads from [WeatherNodeDao] via [observeNodes].
  * Network data is fetched in the background and written to Room -- the UI
  * updates automatically when the database changes.
  *
- * Three sync strategies (user selectable in settings):
- * 1. [syncPeriodic] -- WorkManager triggers every 30 min while riding
- * 2. [syncOnStop] -- triggered by Activity Recognition (IN_VEHICLE → STILL)
- * 3. [syncOnce] -- pre-flight only, no further network calls
- *
- * If network is unavailable, Room serves stale cached data.
- * The UI displays "Last synced at HH:mm" to inform the rider.
+ * Resilience strategy:
+ * - If Valhalla is unavailable: falls back to straight-line Haversine node generation
+ *   so that weather data can still be fetched and the polyline can be displayed.
+ * - If Open-Meteo fails for an individual node: inserts a stub record with DRY defaults
+ *   so the full route polyline is always visible (grey = dry/unknown).
  */
 @Singleton
 class RouteRepository @Inject constructor(
@@ -48,23 +47,16 @@ class RouteRepository @Inject constructor(
     private val solarGlareVector: SolarGlareVector,
 ) {
 
-    /**
-     * Observed by the UI layer. Emits updated node list whenever Room changes.
-     * This is the single source of truth for the GripMatrix polyline gradient.
-     */
+    /** Observed by the UI. Emits updated node list whenever Room changes. */
     fun observeNodes(): Flow<List<WeatherNodeEntity>> = weatherNodeDao.observeAllNodes()
 
     /**
      * Full pre-flight pipeline:
      * 1. Fetch route polyline from Valhalla (motorcycle costing)
-     * 2. Slice into 10km GripMatrix nodes via Haversine
+     *    → fallback: straight-line Haversine points if Valhalla unreachable
+     * 2. Slice into 10 km GripMatrix nodes via Haversine
      * 3. Sync Open-Meteo weather for each node
-     *
-     * @param origin Start GPS coordinate
-     * @param destination End GPS coordinate
-     * @param averageSpeedKmh Rider's expected cruising speed in km/h
-     * @param departureTime24h Planned departure time in HH:mm (24h)
-     * @return Result containing number of weather nodes synced
+     *    → fallback: DRY stub for any node where the API call fails
      */
     suspend fun fetchRouteAndSync(
         origin: Coordinate,
@@ -72,18 +64,23 @@ class RouteRepository @Inject constructor(
         averageSpeedKmh: Double,
         departureTime24h: String,
     ): Result<Int> = withContext(Dispatchers.IO) {
-        // Step 1: Get polyline from Valhalla
+        // Step 1: Get polyline from Valhalla (with fallback)
         val polyline = valhallClient.fetchRoute(origin, destination)
-            .getOrElse { return@withContext Result.failure(it) }
+            .getOrElse { e ->
+                Timber.w(e, "Valhalla unavailable -- falling back to straight-line route generation")
+                generateStraightLinePoints(origin, destination)
+            }
+
+        Timber.i("Route polyline: %d points (Kawana→Yeppoon would be ~450+)", polyline.size)
 
         // Step 2: Sync weather nodes
         val nodeCount = syncRouteWeather(polyline, averageSpeedKmh, departureTime24h)
             .getOrElse { return@withContext Result.failure(it) }
 
-        // Step 3: Fetch emergency shelters from Overpass (best-effort, non-blocking failure)
+        // Step 3: Fetch emergency shelters from Overpass (best-effort, non-blocking)
         val corridorId = "${origin.lat}_${origin.lon}_${destination.lat}_${destination.lon}"
         overpassClient.fetchSheltersAlongRoute(
-            nodes = polyline.filterIndexed { i, _ -> i % 10 == 0 },  // Sample every 10th point for bbox
+            nodes = polyline.filterIndexed { i, _ -> i % 10 == 0 },
             routeCorridorId = corridorId,
         ).onSuccess { shelters ->
             shelterDao.clearCorridor(corridorId)
@@ -97,15 +94,38 @@ class RouteRepository @Inject constructor(
     }
 
     /**
-     * Slices the route and performs a full weather sync for all nodes.
+     * Generates a straight-line route as evenly spaced GPS points.
      *
-     * Generates node stubs via [RouteForecaster], then fetches Open-Meteo data
-     * for each node and populates weather fields.
+     * Used when Valhalla is unavailable (no network, rate limit, or server error).
+     * Produces ~1 point per km between origin and destination.
+     * Sufficient for GripMatrix node slicing -- nodes are placed at 10 km intervals
+     * regardless of the polyline's actual curvature.
      *
-     * @param polyline Route GPS coordinates from Valhalla
-     * @param averageSpeedKmh Rider's expected average speed in km/h
-     * @param departureTime24h Departure time in HH:mm (24h)
-     * @return Result containing the number of nodes synced, or failure with cause
+     * @param origin Start coordinate
+     * @param destination End coordinate
+     * @return List of GPS points interpolated along the great circle
+     */
+    private fun generateStraightLinePoints(origin: Coordinate, destination: Coordinate): List<Coordinate> {
+        val distanceKm = routeForecaster.haversineDistance(origin, destination)
+        val pointCount = ceil(distanceKm).toInt().coerceAtLeast(20)  // At least 20 points
+
+        return (0..pointCount).map { i ->
+            val fraction = i.toDouble() / pointCount
+            Coordinate(
+                lat = origin.lat + (destination.lat - origin.lat) * fraction,
+                lon = origin.lon + (destination.lon - origin.lon) * fraction,
+            )
+        }.also {
+            Timber.i("Straight-line fallback: %d points for %.1f km route", it.size, distanceKm)
+        }
+    }
+
+    /**
+     * Slices the route and syncs Open-Meteo weather for all nodes.
+     *
+     * Per-node failure strategy: if Open-Meteo returns an error for a node, a DRY stub is
+     * inserted instead of dropping the node. This ensures the full route polyline is always
+     * visible on the map (grey = dry/unknown, not missing).
      */
     suspend fun syncRouteWeather(
         polyline: List<Coordinate>,
@@ -115,15 +135,13 @@ class RouteRepository @Inject constructor(
         try {
             val departureTime = LocalTime.parse(departureTime24h, DateTimeFormatter.ofPattern("HH:mm"))
 
-            // Step 1: Generate node stubs via Haversine slicing
             val stubs = routeForecaster.generateNodes(polyline, averageSpeedKmh, departureTime)
                 .getOrElse { return@withContext Result.failure(it) }
 
             Timber.d("Syncing %d weather nodes", stubs.size)
             weatherNodeDao.clearAllNodes()
 
-            // Step 2: Fetch Open-Meteo data for each node and populate weather fields
-            val populatedNodes = stubs.mapNotNull { stub ->
+            val populatedNodes = stubs.map { stub ->
                 openMeteoClient.fetchNodeWeather(stub.latitude, stub.longitude)
                     .fold(
                         onSuccess = { weather ->
@@ -132,7 +150,7 @@ class RouteRepository @Inject constructor(
                             val precipT15 = precipList.getOrElse(1) { 0.0 }
                             val precipNow = precipList.getOrElse(2) { 0.0 }
 
-                            val hourlyIdx = 0  // First hourly slot for current conditions
+                            val hourlyIdx = 0
                             val windSpeed = weather.hourly.windspeed10m.getOrElse(hourlyIdx) { 0.0 }
                             val windDir = weather.hourly.winddirection10m.getOrElse(hourlyIdx) { 0.0 }
                             val temp = weather.hourly.temperature2m.getOrElse(hourlyIdx) { 20.0 }
@@ -140,22 +158,15 @@ class RouteRepository @Inject constructor(
 
                             val sunriseRaw = weather.daily.sunrise.firstOrNull() ?: ""
                             val sunsetRaw = weather.daily.sunset.firstOrNull() ?: ""
-
-                            // Extract HH:mm from ISO 8601 datetime
                             val sunrise24h = extractTime24h(sunriseRaw)
                             val sunset24h = extractTime24h(sunsetRaw)
 
                             val isTwilight = twilightMatrix.isTwilightHazard(
-                                stub.estimatedArrival24h,
-                                sunrise24h,
-                                sunset24h,
+                                stub.estimatedArrival24h, sunrise24h, sunset24h,
                             ).getOrElse { false }
 
                             val isSolarGlare = solarGlareVector.isSolarGlareRisk(
-                                stub.latitude,
-                                stub.longitude,
-                                stub.estimatedArrival24h,
-                                stub.routeBearingDeg,
+                                stub.latitude, stub.longitude, stub.estimatedArrival24h, stub.routeBearingDeg,
                             ).getOrElse { false }
 
                             stub.copy(
@@ -172,16 +183,22 @@ class RouteRepository @Inject constructor(
                             )
                         },
                         onFailure = { e ->
-                            Timber.w("Weather fetch failed for node %s, using stub: %s", stub.nodeId, e.localizedMessage)
-                            null  // Skip nodes where API fails; stubs remain in DB from previous cycle
+                            // DRY stub: insert the node anyway so the polyline is always visible.
+                            // The rider sees grey (dry/unknown) rather than a missing section.
+                            Timber.w("Weather fetch failed for node %s -- inserting DRY stub: %s",
+                                stub.nodeId, e.localizedMessage)
+                            stub.copy(
+                                lastUpdated24h = "??:??",  // Signals stale/missing data to UI
+                            )
                         },
                     )
             }
 
-            // Step 3: Persist to Room database
             if (populatedNodes.isNotEmpty()) {
                 weatherNodeDao.insertNodes(populatedNodes)
-                Timber.i("Weather sync complete: %d/%d nodes populated", populatedNodes.size, stubs.size)
+                val liveCount = populatedNodes.count { it.lastUpdated24h != "??:??" }
+                Timber.i("Weather sync: %d/%d nodes with live data, %d stubs",
+                    liveCount, stubs.size, populatedNodes.size - liveCount)
             }
 
             Result.success(populatedNodes.size)
@@ -191,19 +208,12 @@ class RouteRepository @Inject constructor(
         }
     }
 
-    /** Used for on-stop sync (Activity Recognition STILL trigger) and periodic sync. */
     suspend fun syncPeriodic(
         polyline: List<Coordinate>,
         averageSpeedKmh: Double,
         departureTime24h: String,
     ): Result<Int> = syncRouteWeather(polyline, averageSpeedKmh, departureTime24h)
 
-    /** Extracts HH:mm from an ISO 8601 datetime string (e.g., "2026-03-02T06:12"). */
-    private fun extractTime24h(isoDateTime: String): String {
-        return if (isoDateTime.contains("T")) {
-            isoDateTime.substringAfter("T").take(5)
-        } else {
-            "06:00"  // Safe default if parsing fails
-        }
-    }
+    private fun extractTime24h(isoDateTime: String): String =
+        if (isoDateTime.contains("T")) isoDateTime.substringAfter("T").take(5) else "06:00"
 }

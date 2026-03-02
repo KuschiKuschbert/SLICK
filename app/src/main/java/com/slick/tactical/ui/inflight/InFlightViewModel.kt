@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.slick.tactical.data.local.entity.WeatherNodeEntity
 import com.slick.tactical.data.repository.RouteRepository
 import com.slick.tactical.engine.audio.AudioRouteManager
+import com.slick.tactical.engine.location.GpsStateHolder
 import com.slick.tactical.engine.mesh.ConvoyMeshManager
 import com.slick.tactical.engine.mesh.DetourManager
 import com.slick.tactical.engine.mesh.RiderState
@@ -54,6 +55,7 @@ class InFlightViewModel @Inject constructor(
     private val detourManager: DetourManager,
     private val routeRepository: RouteRepository,
     private val convoyMeshManager: ConvoyMeshManager,
+    private val gpsStateHolder: GpsStateHolder,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(InFlightUiState())
@@ -65,6 +67,7 @@ class InFlightViewModel @Inject constructor(
         observeBatterySurvivalState()
         observeWeatherNodes()
         observeConvoyRiders()
+        observeGps()
     }
 
     private fun observeBatterySurvivalState() {
@@ -82,6 +85,27 @@ class InFlightViewModel @Inject constructor(
             routeRepository.observeNodes().collectLatest { nodes ->
                 _state.value = _state.value.copy(weatherNodes = nodes)
                 Timber.d("InFlightHUD: %d weather nodes updated", nodes.size)
+            }
+        }
+    }
+
+    /**
+     * Live GPS feed from [GpsStateHolder] → Zone 1 telemetry + Zone 2 map camera.
+     *
+     * The foreground service writes every GPS fix here. The ViewModel mirrors it
+     * to [_state] so all three zones update in sync.
+     */
+    private fun observeGps() {
+        viewModelScope.launch {
+            gpsStateHolder.location.collectLatest { gps ->
+                if (gps.hasFix) {
+                    _state.value = _state.value.copy(
+                        riderLat = gps.lat,
+                        riderLon = gps.lon,
+                        speedKmh = gps.speedKmh,
+                        riderBearingDeg = gps.bearingDeg,
+                    )
+                }
             }
         }
     }

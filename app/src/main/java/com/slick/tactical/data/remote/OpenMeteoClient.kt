@@ -43,15 +43,19 @@ class OpenMeteoClient @Inject constructor(
         val response = httpClient.get("${BuildConfig.OPEN_METEO_BASE_URL}/v1/forecast") {
             parameter("latitude", latitude)
             parameter("longitude", longitude)
-            parameter("hourly", "temperature_2m,precipitation,windspeed_10m,winddirection_10m,visibility")
+            // Hourly variables (snake_case as returned by Open-Meteo API v1)
+            parameter("hourly", "temperature_2m,windspeed_10m,winddirection_10m,visibility")
+            // Minutely 15: precipitation history for Asphalt Memory calculation
+            // past_minutely_15=2 → T-30min (idx 0) and T-15min (idx 1)
+            // forecast_minutely_15=1 → T-0 current (idx 2)
             parameter("minutely_15", "precipitation")
-            parameter("past_minutely_15", 2)         // T-30min and T-15min
-            parameter("forecast_minutely_15", 1)     // T-0 current
+            parameter("past_minutely_15", 2)
+            parameter("forecast_minutely_15", 1)
             parameter("daily", "sunrise,sunset")
             parameter("timezone", "Australia/Brisbane")
-            parameter("models", "bom_access_global") // BOM model mandatory for QLD
-            // Open-Meteo free tier needs no API key.
-            // If a commercial key is added in future, inject it here via BuildConfig.
+            // No models= parameter: Open-Meteo automatically selects the best model per location
+            // (BOM ACCESS-G for Australia, ECMWF for elsewhere). Explicitly setting bom_access_global
+            // can cause failures because that model does not support all minutely_15 variables.
         }
         val body = response.body<WeatherResponse>()
         Timber.d("Open-Meteo fetch success at (%.4f, %.4f)", latitude, longitude)
@@ -76,12 +80,12 @@ data class WeatherResponse(
 
 @Serializable
 data class HourlyData(
-    val time: List<String>,                         // ISO 8601 timestamps
-    @SerialName("temperature_2m") val temperature2m: List<Double>,
-    val precipitation: List<Double>,                // mm
-    @SerialName("windspeed_10m") val windspeed10m: List<Double>,     // km/h
-    @SerialName("winddirection_10m") val winddirection10m: List<Double>, // degrees (0-360)
-    val visibility: List<Double>,                   // metres
+    val time: List<String>,                                              // ISO 8601 timestamps
+    @SerialName("temperature_2m") val temperature2m: List<Double>,      // °C
+    @SerialName("windspeed_10m") val windspeed10m: List<Double>,        // km/h
+    @SerialName("winddirection_10m") val winddirection10m: List<Double>,// degrees (0-360)
+    val visibility: List<Double>,                                        // metres
+    // Note: hourly precipitation removed -- we use minutely_15 for Asphalt Memory instead
 )
 
 @Serializable
