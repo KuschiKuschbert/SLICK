@@ -1,5 +1,7 @@
 package com.slick.tactical.engine.navigation
 
+import kotlinx.serialization.Serializable
+
 /**
  * A single turn instruction from the Valhalla routing engine.
  *
@@ -9,6 +11,7 @@ package com.slick.tactical.engine.navigation
  * @property timeSeconds Travel time in seconds to the next maneuver
  * @property beginShapeIndex Index into the decoded route polyline where this maneuver begins
  */
+@Serializable
 data class RouteManeuver(
     val type: Int,
     val instruction: String,

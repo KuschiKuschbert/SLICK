@@ -38,6 +38,7 @@ data class InFlightUiState(
     val nextTurnInstruction: String = "Follow route",
     val nextTurnDistanceMetres: Int = 0,
     val eta24h: String = "--:--",
+    val remainingDistanceKm: Double = 0.0,
 
     // ── Zone 1: Weather hazard strip ─────────────────────────────────────────
     val nextHazard: HazardAlert? = null,
@@ -51,6 +52,9 @@ data class InFlightUiState(
     val weatherNodes: List<WeatherNodeEntity> = emptyList(),
     val shelters: List<ShelterEntity> = emptyList(),
     val convoyRiders: Map<String, RiderState> = emptyMap(),
+
+    /** True while the map camera auto-follows the rider. Set to false on user pan. */
+    val isFollowingRider: Boolean = true,
 
     // ── Zone 3 / system ───────────────────────────────────────────────────────
     val isAudioMuted: Boolean = false,
@@ -83,6 +87,9 @@ data class HazardAlert(
  * - [RouteRepository.observeShelters] → shelter POIs → Zone 2 markers + Zone 1 "nearest cover" alert
  * - [BatterySurvivalManager] → operational state → survival mode
  * - [ConvoyMeshManager] → convoy rider positions → Zone 2 badges
+ *
+ * On init, if [RouteStateHolder] is empty (process was killed), automatically restores the last
+ * synced route from Room so the rider doesn't need to re-sync weather.
  */
 @HiltViewModel
 class InFlightViewModel @Inject constructor(
@@ -110,6 +117,7 @@ class InFlightViewModel @Inject constructor(
         observeConvoyRiders()
         observeGps()
         observeRoute()
+        restoreRouteIfNeeded()
     }
 
     private fun observeBatterySurvivalState() {
@@ -139,7 +147,7 @@ class InFlightViewModel @Inject constructor(
 
     /**
      * Observes GPS from [GpsStateHolder] and triggers all position-dependent computations:
-     * next turn instruction, next hazard node + nearest shelter, TTS zone-transition alerts.
+     * next turn instruction, next hazard node + nearest shelter, remaining distance, TTS alerts.
      */
     private fun observeGps() {
         viewModelScope.launch {
@@ -157,6 +165,7 @@ class InFlightViewModel @Inject constructor(
                 viewModelScope.launch(Dispatchers.Default) {
                     computeNextTurn(gps.lat, gps.lon)
                     computeNextHazardAndShelter(gps.lat, gps.lon)
+                    computeRemainingDistance(gps.lat, gps.lon)
                 }
             }
         }
@@ -185,6 +194,25 @@ class InFlightViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Restores the last synced route from Room if [RouteStateHolder] is empty.
+     *
+     * This fires silently on startup and covers the case where the process was killed
+     * by the OS (battery saver, OEM task killer) and the rider reopens the app mid-ride.
+     * The weather nodes are already in Room; this restores the route polyline and maneuvers.
+     */
+    private fun restoreRouteIfNeeded() {
+        if (routeStateHolder.state.value.hasRoute) return  // already set (fresh session)
+        viewModelScope.launch(Dispatchers.IO) {
+            val restored = routeRepository.restoreLastRoute()
+            if (restored) {
+                Timber.i("InFlight: route restored from Room -- no re-sync required")
+            } else {
+                Timber.d("InFlight: no persisted route found, waiting for pre-flight sync")
+            }
+        }
+    }
+
     // ─── Navigation computation ───────────────────────────────────────────────
 
     private fun computeNextTurn(lat: Double, lon: Double) {
@@ -194,6 +222,18 @@ class InFlightViewModel @Inject constructor(
             nextTurnInstruction = turn.instruction,
             nextTurnDistanceMetres = turn.distanceMetres,
         )
+    }
+
+    /**
+     * Computes straight-line distance from rider to destination.
+     *
+     * Displayed in Zone 1 so the rider always knows how far they have to go.
+     * Uses Haversine (straight-line) for performance -- accurate enough for this display.
+     */
+    private fun computeRemainingDistance(lat: Double, lon: Double) {
+        val destination = routeStateHolder.state.value.destination ?: return
+        val distKm = haversineKm(lat, lon, destination.lat, destination.lon)
+        _state.value = _state.value.copy(remainingDistanceKm = distKm)
     }
 
     /**
@@ -215,7 +255,7 @@ class InFlightViewModel @Inject constructor(
         data class NodeWithReport(val node: WeatherNodeEntity, val report: GripMatrix.NodeDangerReport, val distM: Double)
         val nextHazardNode = nodes.mapNotNull { node ->
             val distM = haversineKm(lat, lon, node.latitude, node.longitude) * 1000.0
-            if (distM < 500 || distM > 120_000) return@mapNotNull null  // skip too close/far
+            if (distM < 500 || distM > 120_000) return@mapNotNull null
             val report = gripMatrix.evaluateNode(node).getOrNull() ?: return@mapNotNull null
             if (report.dangerLevel == GripMatrix.DangerLevel.DRY) return@mapNotNull null
             NodeWithReport(node, report, distM)
@@ -234,7 +274,6 @@ class InFlightViewModel @Inject constructor(
             crosswindKmh = nextHazardNode.report.crosswindKmh,
         )
 
-        // Find nearest shelter to the hazard node (not to the rider)
         val nearestShelter = shelters
             .mapNotNull { shelter ->
                 val distKm = haversineKm(nextHazardNode.node.latitude, nextHazardNode.node.longitude,
@@ -245,15 +284,9 @@ class InFlightViewModel @Inject constructor(
             ?.first
 
         _state.value = _state.value.copy(nextHazard = alert, nearestShelter = nearestShelter)
-
-        // TTS zone-transition alert: only fire when crossing into a higher danger level
         triggerHazardAlertIfNeeded(alert, nearestShelter)
     }
 
-    /**
-     * Speaks a TTS alert when the rider crosses into a new danger zone.
-     * Respects audio mute and the 60-second cooldown between alerts.
-     */
     private fun triggerHazardAlertIfNeeded(alert: HazardAlert, shelter: ShelterEntity?) {
         val isNewDangerZone = alert.dangerLevel > lastAlertedDangerLevel
         if (!isNewDangerZone || _state.value.isAudioMuted) return
@@ -267,12 +300,8 @@ class InFlightViewModel @Inject constructor(
                 GripMatrix.DangerLevel.HIGH -> append("High danger zone in %.0f km. ".format(distKm))
                 else -> append("Conditions deteriorating in %.0f km. ".format(distKm))
             }
-            if (alert.rainfallStatus.contains("rain", ignoreCase = true)) {
-                append("Rain on road. ")
-            }
-            if (alert.crosswindKmh > 20.0) {
-                append("Crosswind %.0f km/h. ".format(alert.crosswindKmh))
-            }
+            if (alert.rainfallStatus.contains("rain", ignoreCase = true)) append("Rain on road. ")
+            if (alert.crosswindKmh > 20.0) append("Crosswind %.0f km/h. ".format(alert.crosswindKmh))
             if (shelter != null) {
                 append("${shelter.name} %.1f km away.".format(
                     haversineKm(_state.value.riderLat, _state.value.riderLon,
@@ -284,9 +313,6 @@ class InFlightViewModel @Inject constructor(
             audioRouteManager.speakTacticalAlert(message)
                 .onFailure { e -> Timber.w(e, "Hazard TTS alert failed") }
         }
-
-        Timber.i("Hazard TTS: %s (distM=%d, shelter=%s)",
-            alert.dangerLevel, alert.distanceMetres, shelter?.name ?: "none")
     }
 
     // ─── User actions ─────────────────────────────────────────────────────────
@@ -316,8 +342,28 @@ class InFlightViewModel @Inject constructor(
     fun onToggleMute() {
         val isMuted = audioRouteManager.toggleMute()
         _state.value = _state.value.copy(isAudioMuted = isMuted)
-        // Reset alert tracker so the next unmute cycle fires fresh alerts
         if (!isMuted) lastAlertedDangerLevel = GripMatrix.DangerLevel.DRY
+    }
+
+    /**
+     * Called when the user pans or zooms the map manually.
+     * Disengages auto-follow so the rider can inspect the route ahead.
+     * The recenter button appears in Zone 2 when follow-mode is disengaged.
+     */
+    fun onMapInteraction() {
+        if (_state.value.isFollowingRider) {
+            _state.value = _state.value.copy(isFollowingRider = false)
+            Timber.d("InFlight: camera follow disengaged (user interaction)")
+        }
+    }
+
+    /**
+     * Called when the rider taps the recenter button in Zone 2.
+     * Re-engages auto-follow and animates the camera back to the rider.
+     */
+    fun onRecenter() {
+        _state.value = _state.value.copy(isFollowingRider = true)
+        Timber.d("InFlight: camera follow re-engaged (recenter)")
     }
 
     // ─── Haversine (local copy to avoid DI dependency just for math) ──────────

@@ -110,6 +110,10 @@ fun Zone2Map(
     riderLon: Double = 153.1230,
     riderBearing: Float = 0f,
     convoyRiders: Map<String, RiderState> = emptyMap(),
+    /** True while the map should auto-follow the rider. Set to false on user pan. */
+    isFollowingRider: Boolean = true,
+    /** Callback fired when the user starts panning or zooming the map manually. */
+    onUserInteraction: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -148,11 +152,20 @@ fun Zone2Map(
                 isCompassEnabled = false
                 isAttributionEnabled = false
                 isLogoEnabled = false
-                // Lock all gestures in-flight — rider must not accidentally scroll
-                isScrollGesturesEnabled = false
-                isZoomGesturesEnabled = false
+                // Allow scroll and zoom so the rider can pan ahead / inspect hazard nodes.
+                // Rotate and tilt remain locked: map rotates with rider bearing (Waze-mode).
+                isScrollGesturesEnabled = true
+                isZoomGesturesEnabled = true
                 isRotateGesturesEnabled = false
                 isTiltGesturesEnabled = false
+            }
+
+            // Detect when the user manually pans or zooms (vs programmatic camera moves)
+            // to disengage auto-follow and show the recenter button.
+            map.addOnCameraMoveStartedListener { reason ->
+                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
+                    onUserInteraction()
+                }
             }
 
             map.setStyle(resolveMapStyle(context)) { style ->
@@ -220,16 +233,37 @@ fun Zone2Map(
         Timber.d("Zone2Map: GripMatrix gradient + hazard markers updated (%d nodes)", weatherNodes.size)
     }
 
-    // ── Rider position + camera follow: runs on every GPS update ─────────────
+    // ── Rider position: always updated regardless of follow-mode ─────────────
     LaunchedEffect(riderLat, riderLon, riderBearing) {
         if (!styleLoaded) return@LaunchedEffect
         val map = mapRef ?: return@LaunchedEffect
 
-        // Update rider marker
+        // Always update the rider icon on the map
         map.getStyle()?.getSourceAs<GeoJsonSource>(SRC_RIDER)
             ?.setGeoJson(pointGeoJson(riderLat, riderLon))
 
-        // Smooth camera follow: bearing-locked (map rotates with rider like Waze)
+        // Camera follow: only animate when the rider hasn't manually panned away.
+        // When isFollowingRider=false, the map stays where the user positioned it
+        // until they tap the recenter button.
+        if (isFollowingRider) {
+            map.animateCamera(
+                CameraUpdateFactory.newCameraPosition(
+                    CameraPosition.Builder()
+                        .target(LatLng(riderLat, riderLon))
+                        .zoom(15.0)
+                        .bearing(riderBearing.toDouble())
+                        .tilt(45.0)
+                        .build(),
+                ),
+                500,
+            )
+        }
+    }
+
+    // ── Recenter: snap camera back to rider when follow-mode is re-engaged ───
+    LaunchedEffect(isFollowingRider) {
+        if (!styleLoaded || !isFollowingRider) return@LaunchedEffect
+        val map = mapRef ?: return@LaunchedEffect
         map.animateCamera(
             CameraUpdateFactory.newCameraPosition(
                 CameraPosition.Builder()
@@ -239,7 +273,7 @@ fun Zone2Map(
                     .tilt(45.0)
                     .build(),
             ),
-            500,
+            400,
         )
     }
 

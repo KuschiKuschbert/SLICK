@@ -7,6 +7,7 @@ import androidx.room.Room
 import com.slick.tactical.BuildConfig
 import com.slick.tactical.data.local.SlickDatabase
 import com.slick.tactical.data.local.dao.RiderBreadcrumbDao
+import com.slick.tactical.data.local.dao.RouteDao
 import com.slick.tactical.data.local.dao.ShelterDao
 import com.slick.tactical.data.local.dao.WeatherNodeDao
 import dagger.Module
@@ -54,6 +55,7 @@ object DataModule {
             "slick_encrypted.db",
         )
             .openHelperFactory(factory)
+            .addMigrations(SlickDatabase.MIGRATION_1_2)
             .fallbackToDestructiveMigrationOnDowngrade()
             .build()
     }
@@ -66,6 +68,9 @@ object DataModule {
 
     @Provides
     fun provideShelterDao(db: SlickDatabase): ShelterDao = db.shelterDao()
+
+    @Provides
+    fun provideRouteDao(db: SlickDatabase): RouteDao = db.routeDao()
 
     /**
      * Retrieves the SQLCipher database passphrase from Android Keystore.

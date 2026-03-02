@@ -1,11 +1,14 @@
 package com.slick.tactical.data.repository
 
+import com.slick.tactical.data.local.dao.RouteDao
 import com.slick.tactical.data.local.dao.ShelterDao
 import com.slick.tactical.data.local.dao.WeatherNodeDao
+import com.slick.tactical.data.local.entity.RouteEntity
 import com.slick.tactical.data.local.entity.WeatherNodeEntity
 import com.slick.tactical.data.remote.OpenMeteoClient
 import com.slick.tactical.data.remote.OverpassClient
 import com.slick.tactical.data.remote.ValhallRoutingClient
+import com.slick.tactical.engine.navigation.RouteManeuver
 import com.slick.tactical.engine.navigation.RouteStateHolder
 import com.slick.tactical.engine.weather.Coordinate
 import com.slick.tactical.engine.weather.GripMatrix
@@ -15,6 +18,8 @@ import com.slick.tactical.engine.weather.TwilightMatrix
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import timber.log.Timber
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -39,6 +44,7 @@ import kotlin.math.ceil
 class RouteRepository @Inject constructor(
     private val weatherNodeDao: WeatherNodeDao,
     private val shelterDao: ShelterDao,
+    private val routeDao: RouteDao,
     private val openMeteoClient: OpenMeteoClient,
     private val overpassClient: OverpassClient,
     private val valhallClient: ValhallRoutingClient,
@@ -49,6 +55,8 @@ class RouteRepository @Inject constructor(
     private val routeStateHolder: RouteStateHolder,
 ) {
 
+    private val json = Json { ignoreUnknownKeys = true }
+
     /** Observed by the UI for GripMatrix gradient colours. */
     fun observeNodes(): Flow<List<WeatherNodeEntity>> = weatherNodeDao.observeAllNodes()
 
@@ -58,6 +66,40 @@ class RouteRepository @Inject constructor(
      */
     fun observeShelters(corridorId: String): Flow<List<com.slick.tactical.data.local.entity.ShelterEntity>> =
         shelterDao.observeSheltersForCorridor(corridorId)
+
+    /**
+     * Restores the last synced route from Room into [RouteStateHolder].
+     *
+     * Called by [com.slick.tactical.ui.inflight.InFlightViewModel] on startup when
+     * [RouteStateHolder] is empty due to process death. After this call, the In-Flight
+     * HUD polyline, GripMatrix gradient, and navigation state are all restored without
+     * requiring the rider to re-sync weather.
+     *
+     * @return true if a route was found and restored, false if no route exists yet
+     */
+    suspend fun restoreLastRoute(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val entity = routeDao.getLastRoute() ?: return@withContext false
+
+            val polyline = json.decodeFromString<List<Coordinate>>(entity.polylineJson)
+            val maneuvers = json.decodeFromString<List<RouteManeuver>>(entity.maneuversJson)
+
+            routeStateHolder.setRoute(
+                polyline = polyline,
+                maneuvers = maneuvers,
+                origin = Coordinate(entity.originLat, entity.originLon),
+                destination = Coordinate(entity.destinationLat, entity.destinationLon),
+                totalDistanceKm = entity.totalDistanceKm,
+                corridorId = entity.corridorId,
+            )
+
+            Timber.i("Route restored from Room (%d pts, corridorId=%s)", polyline.size, entity.corridorId)
+            true
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to restore route from Room")
+            false
+        }
+    }
 
     /**
      * Full pre-flight pipeline:
@@ -102,6 +144,26 @@ class RouteRepository @Inject constructor(
             totalDistanceKm = totalDistanceKm,
             corridorId = corridorId,
         )
+
+        // Persist route to Room so it survives process death (no re-sync needed on reopen)
+        runCatching {
+            routeDao.saveRoute(
+                RouteEntity(
+                    polylineJson = json.encodeToString(polyline),
+                    maneuversJson = json.encodeToString(maneuvers),
+                    originLat = origin.lat,
+                    originLon = origin.lon,
+                    destinationLat = destination.lat,
+                    destinationLon = destination.lon,
+                    totalDistanceKm = totalDistanceKm,
+                    corridorId = corridorId,
+                    savedAt = System.currentTimeMillis(),
+                ),
+            )
+            Timber.d("Route saved to Room (%d pts, %d maneuvers)", polyline.size, maneuvers.size)
+        }.onFailure { e ->
+            Timber.w(e, "Failed to persist route to Room -- in-memory state still valid")
+        }
 
         Timber.i("Route: %d polyline pts, %d maneuvers", polyline.size, maneuvers.size)
 

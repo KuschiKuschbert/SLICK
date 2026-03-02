@@ -49,6 +49,9 @@ data class LocationFetchState(
     val error: String? = null,
 )
 
+/** Kawana Waters hardcoded default — used to detect whether origin has been set by the user. */
+private const val DEFAULT_ORIGIN_LAT = -26.7380
+
 @HiltViewModel
 class PreFlightViewModel @Inject constructor(
     private val routeRepository: RouteRepository,
@@ -60,6 +63,22 @@ class PreFlightViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(PreFlightUiState())
     val state: StateFlow<PreFlightUiState> = _state.asStateFlow()
+
+    init {
+        // Automatically set the rider's current location as origin if still on the hardcoded default.
+        // This fires silently on screen open. If GPS is unavailable, the default remains.
+        autoDetectOriginIfDefault()
+    }
+
+    /**
+     * Fires [fetchCurrentLocation] on init if the origin is still the hardcoded Kawana default.
+     * Riders always start from where they are, not from a static Queensland town.
+     */
+    private fun autoDetectOriginIfDefault() {
+        if (_state.value.originLat == DEFAULT_ORIGIN_LAT) {
+            fetchCurrentLocation()
+        }
+    }
 
     // ─── Origin search ──────────────────────────────────────────────────────
 

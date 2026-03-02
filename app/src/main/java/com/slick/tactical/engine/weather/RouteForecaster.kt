@@ -2,6 +2,7 @@ package com.slick.tactical.engine.weather
 
 import com.slick.tactical.data.local.entity.WeatherNodeEntity
 import com.slick.tactical.util.SlickConstants
+import kotlinx.serialization.Serializable
 import timber.log.Timber
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -157,4 +158,5 @@ class RouteForecaster @Inject constructor() {
  * @property lat Latitude in decimal degrees (negative = south)
  * @property lon Longitude in decimal degrees (positive = east)
  */
+@Serializable
 data class Coordinate(val lat: Double, val lon: Double)

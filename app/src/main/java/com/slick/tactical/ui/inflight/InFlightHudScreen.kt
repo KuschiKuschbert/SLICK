@@ -2,6 +2,7 @@ package com.slick.tactical.ui.inflight
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,8 +12,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -86,18 +89,42 @@ fun InFlightHudScreen(
                 nextTurnInstruction = uiState.nextTurnInstruction,
                 speedKmh = uiState.speedKmh,
                 eta24h = uiState.eta24h,
+                remainingDistanceKm = uiState.remainingDistanceKm,
                 nextHazard = uiState.nextHazard,
                 nearestShelter = uiState.nearestShelter,
                 isTablet = isTablet,
             )
 
-            // Zone 2: Map — intentionally edge-to-edge (no inset padding)
-            Zone2MapWrapper(
+            // Zone 2: Map — edge-to-edge with recenter button overlay
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(zone2Weight),
-                viewModel = viewModel,
-            )
+            ) {
+                Zone2MapWrapper(
+                    modifier = Modifier.fillMaxSize(),
+                    viewModel = viewModel,
+                )
+
+                // Recenter button: appears when the rider has panned away from their position
+                if (!uiState.isFollowingRider) {
+                    FloatingActionButton(
+                        onClick = viewModel::onRecenter,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(12.dp)
+                            .size(48.dp),
+                        containerColor = SlickColors.Alert,
+                        contentColor = SlickColors.Void,
+                    ) {
+                        Text(
+                            text = "⊕",
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
 
             // Zone 3: Interaction Deck — padded above navigation bar
             Zone3InteractionDeck(
@@ -134,13 +161,14 @@ fun Zone1Header(
     nextTurnInstruction: String = "Follow route",
     speedKmh: Double,
     eta24h: String,
+    remainingDistanceKm: Double = 0.0,
     nextHazard: HazardAlert? = null,
     nearestShelter: com.slick.tactical.data.local.entity.ShelterEntity? = null,
     isTablet: Boolean = false,
 ) {
     val arrowFontSize = if (isTablet) 34 else 28
     val speedFontSize = if (isTablet) 40 else 32
-    val etaFontSize = if (isTablet) 24 else 18
+    val etaFontSize = if (isTablet) 22 else 16
     val instrFontSize = if (isTablet) 14 else 12
     val distanceText = when {
         nextTurnDistanceM >= 1000 -> "${"%.1f".format(nextTurnDistanceM / 1000.0)} km"
@@ -153,7 +181,7 @@ fun Zone1Header(
             .padding(horizontal = if (isTablet) 32.dp else 16.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.SpaceEvenly,
     ) {
-        // Primary row: arrow + distance | speed | ETA
+        // Primary row: arrow + distance | speed | remaining distance + ETA
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -178,13 +206,26 @@ fun Zone1Header(
                 textAlign = TextAlign.Center,
             )
 
-            // Strict 24h ETA
-            Text(
-                text = "ETA $eta24h",
-                color = SlickColors.DataSecondary,
-                fontSize = etaFontSize.sp,
-                fontFamily = FontFamily.Monospace,
-            )
+            // Remaining distance + ETA stacked on the right
+            androidx.compose.foundation.layout.Column(
+                horizontalAlignment = Alignment.End,
+            ) {
+                if (remainingDistanceKm > 0.1) {
+                    Text(
+                        text = "${"%.0f".format(remainingDistanceKm)} km",
+                        color = SlickColors.DataPrimary,
+                        fontSize = etaFontSize.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Text(
+                    text = "ETA $eta24h",
+                    color = SlickColors.DataSecondary,
+                    fontSize = (etaFontSize - 2).sp,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
         }
 
         // Secondary row: full turn instruction text (glanceable, not safety-critical)
@@ -279,6 +320,8 @@ fun Zone2MapWrapper(
         riderLon = state.riderLon,
         riderBearing = state.riderBearingDeg,
         convoyRiders = state.convoyRiders,
+        isFollowingRider = state.isFollowingRider,
+        onUserInteraction = viewModel::onMapInteraction,
     )
 }
 
