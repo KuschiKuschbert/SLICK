@@ -30,6 +30,8 @@ data class PreFlightUiState(
     val departureTime24h: String = "08:00",
 
     val isSyncing: Boolean = false,
+    /** 0.0–1.0 fraction of weather nodes fetched. Updated in real time as parallel calls complete. */
+    val syncProgress: Float = 0f,
     val syncedNodeCount: Int = 0,
     val syncError: String? = null,
     val isSyncComplete: Boolean = false,
@@ -187,7 +189,7 @@ class PreFlightViewModel @Inject constructor(
         val destination = Coordinate(current.destinationLat, current.destinationLon)
 
         viewModelScope.launch {
-            _state.value = _state.value.copy(isSyncing = true, syncError = null, isSyncComplete = false)
+            _state.value = _state.value.copy(isSyncing = true, syncProgress = 0f, syncError = null, isSyncComplete = false)
             Timber.i(
                 "Pre-flight sync: %s → %s at %.0f km/h departing %s",
                 current.originQuery,
@@ -201,11 +203,16 @@ class PreFlightViewModel @Inject constructor(
                 destination = destination,
                 averageSpeedKmh = speed,
                 departureTime24h = current.departureTime24h,
+                onProgress = { fraction ->
+                    // Called from a background coroutine -- StateFlow update is thread-safe
+                    _state.value = _state.value.copy(syncProgress = fraction)
+                },
             ).fold(
                 onSuccess = { nodeCount ->
                     Timber.i("Pre-flight sync complete: %d nodes", nodeCount)
                     _state.value = _state.value.copy(
                         isSyncing = false,
+                        syncProgress = 1f,
                         syncedNodeCount = nodeCount,
                         isSyncComplete = nodeCount > 0,
                     )
@@ -214,6 +221,7 @@ class PreFlightViewModel @Inject constructor(
                     Timber.e(error, "Pre-flight sync failed")
                     _state.value = _state.value.copy(
                         isSyncing = false,
+                        syncProgress = 0f,
                         syncError = error.localizedMessage ?: "Sync failed",
                     )
                 },

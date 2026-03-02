@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -174,12 +175,35 @@ fun RouteConfigContent(
 
         // ── Sync status ──────────────────────────────────────────────────────
         when {
-            state.isSyncing -> Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            state.isSyncing -> androidx.compose.foundation.layout.Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                CircularProgressIndicator(color = SlickColors.Wash, strokeWidth = 2.dp)
-                Text("Fetching route and weather nodes...", color = SlickColors.Wash, fontSize = 14.sp)
+                // Show progress label with live node count derived from fraction
+                val fetchedCount = (state.syncProgress * state.syncedNodeCount.coerceAtLeast(1)).toInt()
+                    .coerceAtMost(state.syncedNodeCount.coerceAtLeast(1))
+                Text(
+                    text = if (state.syncProgress > 0f)
+                        "Fetching weather nodes... ${(state.syncProgress * 100).toInt()}%"
+                    else
+                        "Calculating route...",
+                    color = SlickColors.Wash,
+                    fontSize = 13.sp,
+                )
+                // Determinate once nodes start arriving (syncProgress > 0), indeterminate before
+                if (state.syncProgress > 0f) {
+                    LinearProgressIndicator(
+                        progress = { state.syncProgress },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = SlickColors.Wash,
+                        trackColor = SlickColors.Surface,
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = SlickColors.Wash,
+                        trackColor = SlickColors.Surface,
+                    )
+                }
             }
             state.isSyncComplete -> Text(
                 "✓ ${state.syncedNodeCount} weather nodes synced. Ready to ride.",
