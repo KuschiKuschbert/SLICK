@@ -33,19 +33,20 @@ class ValhallRoutingClient @Inject constructor(
 ) {
 
     /**
-     * Fetches a route polyline between [origin] and [destination].
+     * Fetches a route polyline between [origin] and [destination], with an optional [waypoint].
      *
-     * @param origin Start coordinate (e.g., Kawana)
-     * @param destination End coordinate (e.g., Yeppoon)
-     * @return Result containing ordered list of [Coordinate] points forming the route,
-     *         or failure with cause
+     * @param origin Start coordinate
+     * @param destination End coordinate
+     * @param waypoint Optional intermediate stop (via point)
+     * @return Result containing ordered list of [Coordinate] points
      */
     suspend fun fetchRoute(
         origin: Coordinate,
         destination: Coordinate,
+        waypoint: Coordinate? = null,
     ): Result<List<Coordinate>> {
         return try {
-            val requestBody = buildValhallRequest(origin, destination)
+            val requestBody = buildValhallRequest(origin, destination, waypoint)
 
             val response = httpClient.post("${BuildConfig.VALHALLA_BASE_URL}/route") {
                 contentType(ContentType.Application.Json)
@@ -58,36 +59,43 @@ class ValhallRoutingClient @Inject constructor(
                 return Result.failure(Exception("Valhalla returned empty route legs"))
             }
 
-            val encodedShape = routeResponse.trip.legs.first().shape
-            val coordinates = decodePolyline6(encodedShape)
+            // Combine all leg shapes for multi-leg routes (when waypoint is provided)
+            val allCoordinates = routeResponse.trip.legs.flatMap { leg ->
+                decodePolyline6(leg.shape)
+            }
 
-            if (coordinates.isEmpty()) {
+            if (allCoordinates.isEmpty()) {
                 return Result.failure(Exception("Decoded polyline is empty"))
             }
 
-            Timber.i(
-                "Valhalla route: %d points, %.1f km from (%.4f,%.4f) to (%.4f,%.4f)",
-                coordinates.size,
-                routeResponse.trip.summary.length,
-                origin.lat, origin.lon,
-                destination.lat, destination.lon,
-            )
+            Timber.d("Valhalla route (waypoint=%s): %d points, %.1f km",
+                waypoint?.let { "(%.4f,%.4f)".format(it.lat, it.lon) } ?: "none",
+                allCoordinates.size,
+                routeResponse.trip.summary.length)
 
-            Result.success(coordinates)
+            Result.success(allCoordinates)
         } catch (e: Exception) {
-            Timber.e(e, "Valhalla routing failed")
+            Timber.e(e, "Valhalla routing failed (waypoint)")
             Result.failure(Exception("Route fetch failed: ${e.localizedMessage}", e))
         }
     }
 
-    private fun buildValhallRequest(origin: Coordinate, destination: Coordinate): String {
+    private fun buildValhallRequest(
+        origin: Coordinate,
+        destination: Coordinate,
+        waypoint: Coordinate? = null,
+    ): String {
+        val locations = buildList {
+            add(ValhallLocation(lon = origin.lon, lat = origin.lat, type = "break"))
+            if (waypoint != null) {
+                add(ValhallLocation(lon = waypoint.lon, lat = waypoint.lat, type = "through"))
+            }
+            add(ValhallLocation(lon = destination.lon, lat = destination.lat, type = "break"))
+        }
         return Json.encodeToString(
             ValhallRouteRequest.serializer(),
             ValhallRouteRequest(
-                locations = listOf(
-                    ValhallLocation(lon = origin.lon, lat = origin.lat, type = "break"),
-                    ValhallLocation(lon = destination.lon, lat = destination.lat, type = "break"),
-                ),
+                locations = locations,
                 costing = "motorcycle",
                 directionsOptions = DirectionsOptions(units = "kilometers"),
             ),

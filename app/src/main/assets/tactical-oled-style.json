@@ -1,0 +1,173 @@
+{
+  "version": 8,
+  "name": "SLICK Tactical OLED",
+  "metadata": {
+    "slick:description": "Brutalist dark map for motorcycle HUD. True OLED black background, minimal labels, high-contrast roads. Designed for 110 km/h legibility."
+  },
+  "sources": {
+    "protomaps": {
+      "type": "vector",
+      "url": "pmtiles://{pmtiles_url}",
+      "attribution": "Protomaps © OpenStreetMap"
+    }
+  },
+  "glyphs": "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf",
+  "sprite": "https://protomaps.github.io/basemaps-assets/sprites/v4/light",
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": { "background-color": "#000000" }
+    },
+    {
+      "id": "water",
+      "type": "fill",
+      "source": "protomaps",
+      "source-layer": "water",
+      "paint": { "fill-color": "#0A1628" }
+    },
+    {
+      "id": "landuse-park",
+      "type": "fill",
+      "source": "protomaps",
+      "source-layer": "landuse",
+      "filter": ["in", "kind", "park", "nature_reserve", "national_park", "forest"],
+      "paint": { "fill-color": "#0B1A0B" }
+    },
+    {
+      "id": "roads-minor",
+      "type": "line",
+      "source": "protomaps",
+      "source-layer": "roads",
+      "filter": ["all",
+        ["!in", "kind", "highway", "major_road", "medium_road"],
+        ["!=", "kind", "path"]
+      ],
+      "paint": {
+        "line-color": "#1C1C1E",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 16, 2]
+      }
+    },
+    {
+      "id": "roads-medium",
+      "type": "line",
+      "source": "protomaps",
+      "source-layer": "roads",
+      "filter": ["in", "kind", "medium_road"],
+      "paint": {
+        "line-color": "#2A2A2E",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1, 16, 4]
+      }
+    },
+    {
+      "id": "roads-major",
+      "type": "line",
+      "source": "protomaps",
+      "source-layer": "roads",
+      "filter": ["in", "kind", "major_road"],
+      "paint": {
+        "line-color": "#3A3A3E",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.5, 16, 6]
+      }
+    },
+    {
+      "id": "roads-highway-casing",
+      "type": "line",
+      "source": "protomaps",
+      "source-layer": "roads",
+      "filter": ["==", "kind", "highway"],
+      "paint": {
+        "line-color": "#FF5722",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 2.5, 16, 10],
+        "line-opacity": 0.25
+      }
+    },
+    {
+      "id": "roads-highway",
+      "type": "line",
+      "source": "protomaps",
+      "source-layer": "roads",
+      "filter": ["==", "kind", "highway"],
+      "paint": {
+        "line-color": "#4A3828",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 2, 16, 8]
+      }
+    },
+    {
+      "id": "labels-places-small",
+      "type": "symbol",
+      "source": "protomaps",
+      "source-layer": "places",
+      "filter": ["in", "kind", "hamlet", "suburb", "neighbourhood"],
+      "minzoom": 12,
+      "layout": {
+        "text-field": ["get", "name"],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": 10,
+        "text-anchor": "center"
+      },
+      "paint": {
+        "text-color": "#5A5A5E",
+        "text-halo-color": "#000000",
+        "text-halo-width": 1
+      }
+    },
+    {
+      "id": "labels-places-medium",
+      "type": "symbol",
+      "source": "protomaps",
+      "source-layer": "places",
+      "filter": ["in", "kind", "town", "village"],
+      "minzoom": 10,
+      "layout": {
+        "text-field": ["get", "name"],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 10, 11, 16, 14],
+        "text-anchor": "center"
+      },
+      "paint": {
+        "text-color": "#9E9E9E",
+        "text-halo-color": "#000000",
+        "text-halo-width": 1.5
+      }
+    },
+    {
+      "id": "labels-places-large",
+      "type": "symbol",
+      "source": "protomaps",
+      "source-layer": "places",
+      "filter": ["in", "kind", "city"],
+      "minzoom": 8,
+      "layout": {
+        "text-field": ["get", "name"],
+        "text-font": ["Noto Sans Bold"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 8, 12, 14, 18],
+        "text-anchor": "center"
+      },
+      "paint": {
+        "text-color": "#FFFFFF",
+        "text-halo-color": "#000000",
+        "text-halo-width": 2
+      }
+    },
+    {
+      "id": "labels-roads-highway",
+      "type": "symbol",
+      "source": "protomaps",
+      "source-layer": "roads",
+      "filter": ["==", "kind", "highway"],
+      "minzoom": 10,
+      "layout": {
+        "symbol-placement": "line",
+        "text-field": ["get", "name"],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": 11
+      },
+      "paint": {
+        "text-color": "#6A5A4A",
+        "text-halo-color": "#000000",
+        "text-halo-width": 1
+      }
+    }
+  ]
+}

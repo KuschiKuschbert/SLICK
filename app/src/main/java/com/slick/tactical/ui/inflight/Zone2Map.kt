@@ -4,8 +4,6 @@ import android.graphics.Color
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -22,11 +20,11 @@ import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
+import org.maplibre.android.style.expressions.Expression.color
 import org.maplibre.android.style.expressions.Expression.interpolate
 import org.maplibre.android.style.expressions.Expression.linear
 import org.maplibre.android.style.expressions.Expression.lineProgress
 import org.maplibre.android.style.expressions.Expression.stop
-import org.maplibre.android.style.expressions.Expression.color
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property.LINE_CAP_ROUND
 import org.maplibre.android.style.layers.Property.LINE_JOIN_ROUND
@@ -37,19 +35,19 @@ import org.maplibre.android.style.layers.PropertyFactory.lineWidth
 import org.maplibre.android.style.sources.GeoJsonOptions
 import org.maplibre.android.style.sources.GeoJsonSource
 import timber.log.Timber
+import java.io.File
 
 /**
  * Zone 2: Tactical Focus -- the MapLibre map with GripMatrix weather gradient.
  *
- * Features:
- * - PMTiles offline vector tiles (no tile server required during ride)
- * - GripMatrix gradient polyline: grey (dry) → cyan (rain) → orange/red (hazard)
- * - Rider's position anchored at 55% from top (shows more road ahead)
- * - Convoy rider badges with GeoJSON clustering (>4 riders)
- * - Crosswind vector arrows at 10km nodes
+ * Style resolution order:
+ * 1. Local PMTiles file on device (fully offline, populated by GarageSyncWorker)
+ * 2. Protomaps CDN (online fallback using BuildConfig.PMTILES_URL if set)
+ * 3. Embedded asset style (always available, no tile data)
  *
- * The map is anchored below center (55% from top) to maximize forward visibility
- * at 110 km/h -- you need to see what's 500m+ ahead, not what's behind.
+ * The style JSON is embedded in assets/tactical-oled-style.json and can be loaded
+ * without any network connection. The PMTiles URL is injected at runtime via the
+ * style JSON template substitution.
  */
 @Composable
 fun Zone2Map(
@@ -97,33 +95,24 @@ fun Zone2Map(
         modifier = modifier,
         update = { mv ->
             mv.getMapAsync { map ->
-                // Load the Tactical OLED dark style
-                // Falls back to a dark base style if custom PMTiles URL is not configured
-                val styleUrl = if (BuildConfig.MAP_STYLE_URL.isNotBlank() &&
-                    !BuildConfig.MAP_STYLE_URL.contains("YOUR_BUCKET")
-                ) {
-                    BuildConfig.MAP_STYLE_URL
-                } else {
-                    // Fallback: Stadia dark style for development
-                    "https://tiles.stadiamaps.com/styles/alidade_smooth_dark.json"
-                }
+                val styleUri = resolveMapStyle(context)
 
-                map.setStyle(styleUrl) { style ->
-                    // Anchor camera at rider position, 55% from top
+                map.setStyle(styleUri) { style ->
+                    // Camera: rider icon anchored at 55% from top (shows more road ahead)
                     val cameraPosition = CameraPosition.Builder()
                         .target(LatLng(riderLat, riderLon))
                         .zoom(13.0)
                         .bearing(riderBearing.toDouble())
-                        .tilt(45.0)  // 3D perspective for better route preview
+                        .tilt(45.0)
                         .build()
                     map.cameraPosition = cameraPosition
 
-                    // Remove default location puck and render our own rider icon
+                    // Strip all default UI -- pure tactical display
                     map.uiSettings.isCompassEnabled = false
                     map.uiSettings.isAttributionEnabled = false
                     map.uiSettings.isLogoEnabled = false
 
-                    // Draw the GripMatrix weather gradient polyline if nodes exist
+                    // Draw weather gradient if nodes are available
                     if (weatherNodes.isNotEmpty()) {
                         drawGripMatrixPolyline(style, weatherNodes, gripMatrix)
                     }
@@ -145,16 +134,75 @@ fun Zone2Map(
 }
 
 /**
+ * Resolves the MapLibre style URI using the following priority:
+ *
+ * 1. **Local PMTiles file** (`files/slick-corridor.pmtiles`) -- fully offline, populated by
+ *    [com.slick.tactical.service.GarageSyncWorker]. Uses embedded style JSON as template.
+ * 2. **Protomaps CDN PMTiles** (`BuildConfig.PMTILES_URL`) -- online fallback, configured via
+ *    `local.properties`. Uses embedded style JSON as template.
+ * 3. **Asset style only** (`asset://tactical-oled-style.json`) -- style loads but no tile data.
+ *    The map renders background/labels only. Functional for development without PMTiles set up.
+ *
+ * The embedded style JSON in `assets/tactical-oled-style.json` uses `{pmtiles_url}` as a
+ * placeholder which is replaced at runtime with the actual PMTiles source.
+ */
+fun resolveMapStyle(context: android.content.Context): String {
+    val localPmtilesFile = File(context.filesDir, "slick-corridor.pmtiles")
+
+    return when {
+        // Priority 1: locally downloaded PMTiles (fully offline)
+        localPmtilesFile.exists() -> {
+            Timber.i("Zone2Map: using local PMTiles file (%d MB)", localPmtilesFile.length() / 1_048_576)
+            buildStyleWithPmtilesUrl(context, "pmtiles://${localPmtilesFile.absolutePath}")
+        }
+
+        // Priority 2: remote PMTiles URL configured
+        BuildConfig.PMTILES_URL.isNotBlank() && !BuildConfig.PMTILES_URL.contains("YOUR_BUCKET") -> {
+            Timber.i("Zone2Map: using remote PMTiles URL")
+            buildStyleWithPmtilesUrl(context, "pmtiles://${BuildConfig.PMTILES_URL}")
+        }
+
+        // Priority 3: asset style only (no tiles -- background + labels render, no roads)
+        else -> {
+            Timber.w("Zone2Map: no PMTiles configured, using asset style without tile data")
+            "asset://tactical-oled-style.json"
+        }
+    }
+}
+
+/**
+ * Reads the embedded style JSON from assets and substitutes the PMTiles source URL.
+ * Writes the resolved style to a temp file and returns its URI.
+ */
+private fun buildStyleWithPmtilesUrl(context: android.content.Context, pmtilesUri: String): String {
+    return try {
+        val styleJson = context.assets.open("tactical-oled-style.json")
+            .bufferedReader()
+            .use { it.readText() }
+            .replace("{pmtiles_url}", pmtilesUri)
+
+        // Write resolved style to internal cache for MapLibre to load
+        val cacheFile = File(context.cacheDir, "slick-map-style.json")
+        cacheFile.writeText(styleJson)
+        Timber.d("Zone2Map: resolved style written to %s", cacheFile.absolutePath)
+        cacheFile.toURI().toString()
+    } catch (e: Exception) {
+        Timber.e(e, "Zone2Map: failed to build style with PMTiles URL, falling back to asset")
+        "asset://tactical-oled-style.json"
+    }
+}
+
+/**
  * Draws the GripMatrix weather gradient as a MapLibre LineLayer.
  *
- * The gradient maps each node's danger level to a colour:
+ * Danger level → colour mapping:
  * - DRY: #9E9E9E (grey)
- * - MODERATE: #00E5FF (cyan -- Wash colour)
+ * - MODERATE: #00E5FF (cyan -- Wash)
  * - HIGH: #FF9800 (amber)
  * - EXTREME: #FF5722 (Alert orange)
  *
- * [lineMetrics] MUST be true on the GeoJSON source for line-gradient to work.
- * This is the most common MapLibre gotcha -- see slick-maplibre SKILL.md.
+ * GOTCHA: [lineMetrics] MUST be true on the GeoJSON source for line-gradient.
+ * See slick-maplibre SKILL.md.
  */
 private fun drawGripMatrixPolyline(
     style: Style,
@@ -165,25 +213,12 @@ private fun drawGripMatrixPolyline(
         val sourceId = "grip-matrix-source"
         val layerId = "grip-matrix-layer"
 
-        // Remove existing layers/sources to avoid duplicate errors
         style.removeLayer(layerId)
         style.removeSource(sourceId)
 
-        // Build GeoJSON LineString from node coordinates
-        val coordinates = nodes.joinToString(",") { node ->
-            "[${node.longitude},${node.latitude}]"
-        }
-        val geoJson = """
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "LineString",
-                    "coordinates": [$coordinates]
-                }
-            }
-        """.trimIndent()
+        val coordinates = nodes.joinToString(",") { "[${it.longitude},${it.latitude}]" }
+        val geoJson = """{"type":"Feature","geometry":{"type":"LineString","coordinates":[$coordinates]}}"""
 
-        // lineMetrics: true is MANDATORY for line-gradient interpolation
         val source = GeoJsonSource(
             sourceId,
             geoJson,
@@ -191,19 +226,14 @@ private fun drawGripMatrixPolyline(
         )
         style.addSource(source)
 
-        // Build gradient stops based on node danger levels
-        val totalNodes = nodes.size
-        val gradientStops = buildGradientStops(nodes, gripMatrix, totalNodes)
-
         val layer = LineLayer(layerId, sourceId).apply {
             setProperties(
                 lineCap(LINE_CAP_ROUND),
                 lineJoin(LINE_JOIN_ROUND),
-                lineWidth(10f),  // Thick for visibility on a mounted phone
-                lineGradient(gradientStops),
+                lineWidth(10f),
+                lineGradient(buildGradientStops(nodes, gripMatrix)),
             )
         }
-
         style.addLayer(layer)
         Timber.d("GripMatrix polyline drawn: %d nodes", nodes.size)
     } catch (e: Exception) {
@@ -211,19 +241,12 @@ private fun drawGripMatrixPolyline(
     }
 }
 
-/**
- * Builds MapLibre line-gradient expression stops from GripMatrix node evaluations.
- *
- * Maps node position (0.0 = start, 1.0 = end) to the danger colour for that node.
- * Progress values are evenly distributed across nodes.
- */
 private fun buildGradientStops(
     nodes: List<WeatherNodeEntity>,
     gripMatrix: GripMatrix,
-    totalNodes: Int,
 ): org.maplibre.android.style.expressions.Expression {
+    val totalNodes = nodes.size
     if (totalNodes <= 1) {
-        // Single node or empty -- show dry grey
         return interpolate(
             linear(), lineProgress(),
             stop(0.0f, color(Color.parseColor("#9E9E9E"))),
@@ -234,12 +257,10 @@ private fun buildGradientStops(
     val stops = nodes.mapIndexed { index, node ->
         val progress = index.toFloat() / (totalNodes - 1).toFloat()
         val dangerLevel = gripMatrix.evaluateNode(node)
+            .map { it.dangerLevel }
             .getOrElse { GripMatrix.DangerLevel.DRY }
-            .let { gripMatrix.evaluateNode(node).map { it.dangerLevel }.getOrElse { GripMatrix.DangerLevel.DRY } }
-        val hexColor = gripMatrix.dangerLevelToColor(dangerLevel)
-        stop(progress, color(Color.parseColor(hexColor)))
+        stop(progress, color(Color.parseColor(gripMatrix.dangerLevelToColor(dangerLevel))))
     }
 
-    // interpolate() requires at least 2 stops
     return interpolate(linear(), lineProgress(), *stops.toTypedArray())
 }

@@ -122,63 +122,68 @@ curl "https://valhalla1.openstreetmap.de/route?json={\"locations\":[{\"lat\":-26
 
 ## 3. Protomaps PMTiles
 
-**Download QLD region**: https://protomaps.com/downloads/osm
+### Download QLD corridor tiles
 
-Select the bounding box covering:
-- South: -28.0 (south of Brisbane)
-- North: -22.0 (north of Yeppoon)
-- West: 149.0
-- East: 154.0
+**Protomaps downloader**: https://app.protomaps.com/downloads/osm
 
-Expected file size: ~200-400MB for this corridor.
+Select the bounding box:
+| Edge | Coordinate |
+|------|-----------|
+| South | -28.0 (south of Brisbane) |
+| North | -22.0 (north of Yeppoon) |
+| West | 149.0 |
+| East | 154.0 |
 
-**Host on Cloudflare R2**:
+Expected file size: ~200–400 MB for this corridor.
+
+### Hosting options
+
+**Option A: Cloudflare R2 (recommended -- free for <10 GB stored, no egress cost)**
 ```bash
-# Install wrangler: npm install -g wrangler
+npm install -g wrangler
+wrangler login
 wrangler r2 bucket create slick-maps
 wrangler r2 object put slick-maps/qld-corridor.pmtiles --file qld-corridor.pmtiles
 ```
+Enable "Public access" on the R2 bucket, then set:
+```
+PMTILES_URL=https://pub-XXXX.r2.dev/qld-corridor.pmtiles
+```
 
-Set `PMTILES_URL` in `local.properties` to the public R2 URL.
+**Option B: Push file directly to test device (dev only)**
+```bash
+# ADB push to internal storage -- GarageSyncWorker looks here first
+adb push qld-corridor.pmtiles /sdcard/Android/data/com.slick.tactical/files/slick-corridor.pmtiles
+```
+
+### GarageSyncWorker (automated updates)
+
+`GarageSyncWorker` handles all future map updates automatically:
+- Runs weekly when device is **charging + on Wi-Fi**
+- Uses HTTP ETag to skip downloads if tiles haven't changed
+- Downloads to a temp file, validates size (> 1 MB), then atomically replaces the live file
+- Aborts if free storage < 500 MB
+- Tile stored at: `context.filesDir/slick-corridor.pmtiles`
+
+Set `PMTILES_URL` in `local.properties` to the public R2/S3 URL for the worker to function.
 
 ---
 
 ## 4. MapLibre Tactical OLED Style
 
-Create `slick-tactical-style.json` and upload to R2. Minimal dark style:
+**Status: IMPLEMENTED.** The style is embedded in `app/src/main/assets/tactical-oled-style.json`.
+The app works without any hosting setup. `Zone2Map.resolveMapStyle()` handles the full priority chain:
+1. Local PMTiles file on device (fully offline) → uses embedded style with local PMTiles source
+2. Remote PMTiles URL if `PMTILES_URL` is set in `local.properties`
+3. Asset style only (background + labels, no road tiles) → functional for development
 
-```json
-{
-  "version": 8,
-  "name": "SLICK Tactical OLED",
-  "sources": {
-    "slick": {
-      "type": "vector",
-      "url": "pmtiles://https://YOUR_R2_URL/qld-corridor.pmtiles"
-    }
-  },
-  "layers": [
-    { "id": "background", "type": "background", "paint": { "background-color": "#000000" } },
-    { "id": "water", "type": "fill", "source": "slick", "source-layer": "water",
-      "paint": { "fill-color": "#0A1628" } },
-    { "id": "roads-minor", "type": "line", "source": "slick", "source-layer": "transportation",
-      "filter": ["!in", "class", "motorway", "trunk", "primary"],
-      "paint": { "line-color": "#1C1C1C", "line-width": 1.5 } },
-    { "id": "roads-major", "type": "line", "source": "slick", "source-layer": "transportation",
-      "filter": ["in", "class", "primary", "trunk"],
-      "paint": { "line-color": "#2C2C2C", "line-width": 3 } },
-    { "id": "highways", "type": "line", "source": "slick", "source-layer": "transportation",
-      "filter": ["==", "class", "motorway"],
-      "paint": { "line-color": "#3C3C3C", "line-width": 5 } },
-    { "id": "labels-place", "type": "symbol", "source": "slick", "source-layer": "place",
-      "filter": ["in", "class", "city", "town"],
-      "layout": { "text-field": "{name}", "text-size": 12 },
-      "paint": { "text-color": "#9E9E9E" } }
-  ]
-}
-```
+### Optional: Host style on Cloudflare R2 for remote updates
 
-Set `MAP_STYLE_URL` in `local.properties` to the public R2 URL.
+If you want to update the map style without a new APK release:
+1. Upload `app/src/main/assets/tactical-oled-style.json` to R2 with your PMTiles URL substituted
+2. Set `MAP_STYLE_URL=https://YOUR_BUCKET.r2.dev/slick-tactical-style.json` in `local.properties`
+
+Otherwise leave `MAP_STYLE_URL=asset://tactical-oled-style.json` (the default).
 
 ---
 
