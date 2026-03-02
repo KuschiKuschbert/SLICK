@@ -163,7 +163,7 @@ fun Zone2Map(
                 // Rotate and tilt remain locked: map rotates with rider bearing (Waze-mode).
                 isScrollGesturesEnabled = true
                 isZoomGesturesEnabled = true
-                isRotateGesturesEnabled = false
+                isRotateGesturesEnabled = true   // rider can manually rotate, recenter re-snaps to bearing
                 isTiltGesturesEnabled = false
             }
 
@@ -179,24 +179,34 @@ fun Zone2Map(
                 styleLoaded = true
                 addAllLayers(style)
 
-                // Immediate camera zoom to rider on InFlight start
+                // Prefer the route origin for the initial camera — it is always populated by the
+                // time the InFlight screen opens (the route was synced on PreFlight). The raw
+                // riderLat/riderLon may still be the Kawana default if GPS hasn't fixed yet.
+                val initialTarget = navState.origin
+                    ?.let { LatLng(it.lat, it.lon) }
+                    ?: LatLng(riderLat, riderLon)
+
                 map.moveCamera(
                     CameraUpdateFactory.newCameraPosition(
                         CameraPosition.Builder()
-                            .target(LatLng(riderLat, riderLon))
+                            .target(initialTarget)
                             .zoom(14.0)
                             .bearing(riderBearing.toDouble())
                             .tilt(45.0)
                             .build(),
                     ),
                 )
-                Timber.d("Zone2Map: style loaded, layers initialised, camera set to rider")
+                Timber.d("Zone2Map: style loaded, layers initialised, camera set to %s",
+                    if (navState.origin != null) "route origin" else "rider default")
             }
         }
     }
 
-    // ── Route polyline: updated when the route is set after weather sync ──────
-    LaunchedEffect(navState.fullPolyline) {
+    // ── Route polyline: updated when route is set OR when style finishes loading ──
+    // styleLoaded must be a key so this re-fires after the async setStyle() callback completes.
+    // Without it the route data arrives before the style is ready, the effect returns early,
+    // and the polyline never renders because the key (fullPolyline) never changes again.
+    LaunchedEffect(navState.fullPolyline, styleLoaded) {
         if (!styleLoaded || navState.fullPolyline.size < 2) return@LaunchedEffect
         val style = mapRef?.getStyle() ?: return@LaunchedEffect
 
@@ -232,13 +242,18 @@ fun Zone2Map(
         Timber.d("Zone2Map: %d next-stop markers updated", nextStops.size)
     }
 
-    // ── GripMatrix gradient: updated when weather sync completes ─────────────
-    LaunchedEffect(weatherNodes) {
+    // ── GripMatrix gradient: updated when weather nodes or the route polyline changes ──
+    // Also keyed on styleLoaded (same race condition as the route effect above).
+    // SRC_GRIP geometry uses the full road-following polyline so the colour gradient
+    // tracks the actual road — weather nodes alone would produce straight connector lines.
+    LaunchedEffect(weatherNodes, navState.fullPolyline, styleLoaded) {
         if (!styleLoaded || weatherNodes.size < 2) return@LaunchedEffect
         val style = mapRef?.getStyle() ?: return@LaunchedEffect
 
+        val gripGeometry = if (navState.fullPolyline.size >= 2) navState.fullPolyline
+            else weatherNodes.map { Coordinate(it.latitude, it.longitude) }
         style.getSourceAs<GeoJsonSource>(SRC_GRIP)
-            ?.setGeoJson(lineStringGeoJson(weatherNodes.map { Coordinate(it.latitude, it.longitude) }))
+            ?.setGeoJson(lineStringGeoJson(gripGeometry))
 
         style.getLayerAs<LineLayer>(LYR_GRIP)?.setProperties(
             lineGradient(buildGradientStops(weatherNodes, gripMatrix)),
@@ -252,7 +267,9 @@ fun Zone2Map(
     }
 
     // ── Rider position: always updated regardless of follow-mode ─────────────
-    LaunchedEffect(riderLat, riderLon, riderBearing) {
+    // styleLoaded is a key so the first GPS fix is not silently dropped when it
+    // arrives before the map style has finished loading.
+    LaunchedEffect(riderLat, riderLon, riderBearing, styleLoaded) {
         if (!styleLoaded) return@LaunchedEffect
         val map = mapRef ?: return@LaunchedEffect
 

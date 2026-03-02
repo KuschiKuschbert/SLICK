@@ -5,8 +5,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.slick.tactical.data.repository.RouteRepository
+import com.slick.tactical.engine.navigation.RouteStateHolder
 import com.slick.tactical.engine.weather.Coordinate
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -57,6 +59,7 @@ private const val DEFAULT_ORIGIN_LAT = -26.7380
 @HiltViewModel
 class PreFlightViewModel @Inject constructor(
     private val routeRepository: RouteRepository,
+    private val routeStateHolder: RouteStateHolder,
     private val fusedLocationClient: FusedLocationProviderClient,
 ) : ViewModel() {
 
@@ -67,9 +70,36 @@ class PreFlightViewModel @Inject constructor(
     val state: StateFlow<PreFlightUiState> = _state.asStateFlow()
 
     init {
-        // Automatically set the rider's current location as origin if still on the hardcoded default.
-        // This fires silently on screen open. If GPS is unavailable, the default remains.
         autoDetectOriginIfDefault()
+        restoreSyncStateIfCached()
+    }
+
+    /**
+     * Checks if a previous sync is still valid (route in RouteStateHolder + nodes in Room).
+     * If so, marks the UI as ready without requiring the rider to re-sync after navigating away
+     * from the route page and returning.
+     */
+    private fun restoreSyncStateIfCached() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val nav = routeStateHolder.state.value
+            if (!nav.hasRoute) return@launch
+            val nodeCount = routeRepository.getCachedNodeCount()
+            if (nodeCount > 0) {
+                Timber.d("PreFlight: restored sync state from cache (%d nodes)", nodeCount)
+                _state.value = _state.value.copy(
+                    isSyncComplete = true,
+                    syncedNodeCount = nodeCount,
+                    syncProgress = 1f,
+                    // Restore origin/destination display names from the cached route
+                    originLat = nav.origin?.lat ?: _state.value.originLat,
+                    originLon = nav.origin?.lon ?: _state.value.originLon,
+                    originQuery = nav.origin?.let { "My Location (%.4f, %.4f)".format(it.lat, it.lon) }
+                        ?: _state.value.originQuery,
+                    destinationLat = nav.destination?.lat ?: _state.value.destinationLat,
+                    destinationLon = nav.destination?.lon ?: _state.value.destinationLon,
+                )
+            }
+        }
     }
 
     /**

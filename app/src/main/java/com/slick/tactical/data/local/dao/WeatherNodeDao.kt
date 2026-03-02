@@ -23,6 +23,10 @@ interface WeatherNodeDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertNodes(nodes: List<WeatherNodeEntity>)
 
+    /** Returns the number of persisted weather nodes. Used to restore sync state on PreFlight re-open. */
+    @Query("SELECT COUNT(*) FROM weather_nodes")
+    suspend fun getNodeCount(): Int
+
     /** Clears all nodes for the current route -- called before inserting a new route's data. */
     @Query("DELETE FROM weather_nodes")
     suspend fun clearAllNodes()

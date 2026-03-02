@@ -65,6 +65,15 @@ class RouteRepository @Inject constructor(
     fun observeNodes(): Flow<List<WeatherNodeEntity>> = weatherNodeDao.observeAllNodes()
 
     /**
+     * Returns the number of weather nodes currently persisted in Room.
+     * Used by [com.slick.tactical.ui.preflight.PreFlightViewModel] to detect whether a previous
+     * sync is still valid so the rider does not have to re-sync after leaving the route page.
+     */
+    suspend fun getCachedNodeCount(): Int = withContext(Dispatchers.IO) {
+        weatherNodeDao.getNodeCount()
+    }
+
+    /**
      * Live shelter POIs for the given route corridor.
      * Collected by [com.slick.tactical.ui.inflight.InFlightViewModel] to render shelter markers.
      */
