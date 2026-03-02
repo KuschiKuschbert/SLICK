@@ -86,6 +86,12 @@ android {
     // JUnit 5 JARs all contain META-INF/LICENSE.md -- exclude duplicates so
     // the androidTest instrumentation APK can be assembled by Android Studio.
     packaging {
+        jniLibs {
+            // Store .so files uncompressed and page-aligned in the APK.
+            // Required for Android 15+ 16 KB page size compatibility:
+            // compressed .so files cannot be memory-mapped with 16 KB alignment.
+            useLegacyPackaging = false
+        }
         resources {
             excludes += listOf(
                 "META-INF/LICENSE.md",

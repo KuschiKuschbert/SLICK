@@ -5,16 +5,24 @@ import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -26,11 +34,14 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.slick.tactical.data.remote.ShelterType
 import com.slick.tactical.ui.theme.SlickColors
 
 /**
@@ -177,11 +188,89 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(4.dp))
 
+        // ── Map Marker Filters ────────────────────────────────────────────────
+        SectionLabel("MAP MARKERS")
+        Text(
+            text = "Select which POI types appear on the in-flight map. Disabled types are hidden from the map and predictive stops.",
+            color = SlickColors.DataSecondary,
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        PoiFilterGrid(
+            enabledPoiTypes = state.enabledPoiTypes,
+            onToggle = viewModel::onTogglePoiType,
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
         Text(
             text = "Version: SLICK 0.1.0 · Supabase: sqddpmhjpzgzggbsqgpr",
             color = SlickColors.DataSecondary,
             fontSize = 10.sp,
         )
+    }
+}
+
+private data class PoiTypeConfig(
+    val type: String,
+    val label: String,
+    val icon: String,
+    val dotColor: Color,
+)
+
+private val POI_TYPE_CONFIGS = listOf(
+    PoiTypeConfig(ShelterType.FUEL,        "Fuel",         "⛽", Color(0xFFFF9800)),
+    PoiTypeConfig(ShelterType.REST_AREA,   "Rest Area",    "🛑", Color(0xFFFF9800)),
+    PoiTypeConfig(ShelterType.PUB,         "Pub / Bar",    "🍺", Color(0xFF9C27B0)),
+    PoiTypeConfig(ShelterType.CAFE,        "Cafe / Food",  "☕", Color(0xFF9C27B0)),
+    PoiTypeConfig(ShelterType.HOTEL,       "Hotel / Motel","🏨", Color(0xFF9C27B0)),
+    PoiTypeConfig(ShelterType.CONVENIENCE, "Convenience",  "🛒", Color(0xFF9C27B0)),
+    PoiTypeConfig(ShelterType.SHELTER,     "Shelter",      "🏠", Color(0xFF9E9E9E)),
+    PoiTypeConfig(ShelterType.TOILET,      "Toilet",       "🚻", Color(0xFF9E9E9E)),
+    PoiTypeConfig(ShelterType.WATER,       "Water",        "💧", Color(0xFF9E9E9E)),
+)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PoiFilterGrid(
+    enabledPoiTypes: Set<String>,
+    onToggle: (String) -> Unit,
+) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        POI_TYPE_CONFIGS.forEach { config ->
+            val enabled = config.type in enabledPoiTypes
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (enabled) SlickColors.Surface else SlickColors.Void)
+                    .border(
+                        width = 1.dp,
+                        color = if (enabled) config.dotColor else SlickColors.DataSecondary.copy(alpha = 0.4f),
+                        shape = RoundedCornerShape(8.dp),
+                    )
+                    .clickable { onToggle(config.type) }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(if (enabled) config.dotColor else SlickColors.DataSecondary.copy(alpha = 0.3f)),
+                )
+                Text(
+                    text = "${config.icon} ${config.label}",
+                    color = if (enabled) SlickColors.DataPrimary else SlickColors.DataSecondary.copy(alpha = 0.5f),
+                    fontSize = 13.sp,
+                    fontWeight = if (enabled) FontWeight.Medium else FontWeight.Normal,
+                )
+            }
+        }
     }
 }
 

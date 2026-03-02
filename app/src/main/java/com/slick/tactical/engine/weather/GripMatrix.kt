@@ -113,9 +113,9 @@ class GripMatrix @Inject constructor() {
      * @return Hex colour string compatible with MapLibre's `color()` expression
      */
     fun dangerLevelToColor(dangerLevel: DangerLevel): String = when (dangerLevel) {
-        DangerLevel.DRY -> "#9E9E9E"       // Grey
-        DangerLevel.MODERATE -> "#00E5FF"  // Cyan (Wash)
-        DangerLevel.HIGH -> "#FF9800"      // Amber
-        DangerLevel.EXTREME -> "#FF5722"   // Alert orange
+        DangerLevel.DRY -> "#4CAF50"       // Green — optimal grip, all clear
+        DangerLevel.MODERATE -> "#FFEB3B"  // Yellow — light rain / residual moisture / mild crosswind
+        DangerLevel.HIGH -> "#FF9800"      // Orange — active rain or strong crosswind
+        DangerLevel.EXTREME -> "#F44336"   // Red — severe conditions, find cover
     }
 }

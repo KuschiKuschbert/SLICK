@@ -64,7 +64,8 @@
         android:supportsRtl="false"
         android:theme="@style/Theme.Slick"
         android:hardwareAccelerated="true"
-        android:largeHeap="false">
+        android:largeHeap="false"
+        android:extractNativeLibs="false">
 
         <!-- Disable Sentry's ContentProvider auto-init so we can control DSN from SlickApplication.
              Without this, SentryInitProvider runs before Application.onCreate() and crashes

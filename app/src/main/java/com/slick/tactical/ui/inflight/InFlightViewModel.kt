@@ -1,9 +1,12 @@
 package com.slick.tactical.ui.inflight
 
+import android.content.Context
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.slick.tactical.data.local.entity.ShelterEntity
 import com.slick.tactical.data.local.entity.WeatherNodeEntity
+import com.slick.tactical.data.remote.ShelterType
 import com.slick.tactical.data.repository.RouteRepository
 import com.slick.tactical.engine.audio.AudioRouteManager
 import com.slick.tactical.engine.location.GpsStateHolder
@@ -15,13 +18,17 @@ import com.slick.tactical.engine.navigation.RouteStateHolder
 import com.slick.tactical.engine.weather.GripMatrix
 import com.slick.tactical.service.BatterySurvivalManager
 import com.slick.tactical.service.OperationalState
+import com.slick.tactical.ui.preflight.DEFAULT_ENABLED_POI_TYPES
+import com.slick.tactical.util.slickSettingsDataStore
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
@@ -29,6 +36,8 @@ import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
+
+private val KEY_ENABLED_POI_TYPES_INFLIGHT = stringPreferencesKey("enabled_poi_types")
 
 /** UI state for all three HUD zones. Immutable snapshot. */
 data class InFlightUiState(
@@ -55,6 +64,12 @@ data class InFlightUiState(
 
     /** True while the map camera auto-follows the rider. Set to false on user pan. */
     val isFollowingRider: Boolean = true,
+
+    /** POI types currently visible on the map (persisted in DataStore via SettingsViewModel). */
+    val enabledPoiTypes: Set<String> = DEFAULT_ENABLED_POI_TYPES,
+
+    /** Next 5 POIs ahead of the rider along the route, sorted by along-route distance. */
+    val nextStops: List<ShelterEntity> = emptyList(),
 
     // ── Zone 3 / system ───────────────────────────────────────────────────────
     val isAudioMuted: Boolean = false,
@@ -93,6 +108,7 @@ data class HazardAlert(
  */
 @HiltViewModel
 class InFlightViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val batterySurvivalManager: BatterySurvivalManager,
     private val audioRouteManager: AudioRouteManager,
     private val detourManager: DetourManager,
@@ -117,7 +133,24 @@ class InFlightViewModel @Inject constructor(
         observeConvoyRiders()
         observeGps()
         observeRoute()
+        observePoiFilters()
         restoreRouteIfNeeded()
+    }
+
+    /** Keeps [InFlightUiState.enabledPoiTypes] in sync with the DataStore written by [SettingsViewModel]. */
+    private fun observePoiFilters() {
+        viewModelScope.launch {
+            context.slickSettingsDataStore.data
+                .map { prefs ->
+                    val raw = prefs[KEY_ENABLED_POI_TYPES_INFLIGHT]
+                    if (raw != null) raw.split(",").filter { it.isNotBlank() }.toSet()
+                    else DEFAULT_ENABLED_POI_TYPES
+                }
+                .collectLatest { types ->
+                    _state.value = _state.value.copy(enabledPoiTypes = types)
+                    Timber.d("InFlight: POI filters updated → %s", types.joinToString())
+                }
+        }
     }
 
     private fun observeBatterySurvivalState() {
@@ -166,6 +199,7 @@ class InFlightViewModel @Inject constructor(
                     computeNextTurn(gps.lat, gps.lon)
                     computeNextHazardAndShelter(gps.lat, gps.lon)
                     computeRemainingDistance(gps.lat, gps.lon)
+                    computeNextStops(gps.lat, gps.lon)
                 }
             }
         }
@@ -234,6 +268,58 @@ class InFlightViewModel @Inject constructor(
         val destination = routeStateHolder.state.value.destination ?: return
         val distKm = haversineKm(lat, lon, destination.lat, destination.lon)
         _state.value = _state.value.copy(remainingDistanceKm = distKm)
+    }
+
+    /**
+     * Finds the next 5 POIs **ahead of the rider** along the route direction.
+     *
+     * Algorithm:
+     * 1. Filter shelters to only enabled POI types.
+     * 2. Find the rider's nearest polyline index (sample every 10th point for performance).
+     * 3. For each filtered shelter, find its nearest polyline index.
+     * 4. Keep only shelters whose polyline index > riderIndex (ahead on route).
+     * 5. Sort by polyline index ascending (closest along-route first), take 5.
+     */
+    private fun computeNextStops(lat: Double, lon: Double) {
+        val polyline = routeStateHolder.state.value.fullPolyline
+        val allShelters = _state.value.shelters
+        val enabledTypes = _state.value.enabledPoiTypes
+
+        if (polyline.size < 2 || allShelters.isEmpty()) {
+            _state.value = _state.value.copy(nextStops = emptyList())
+            return
+        }
+
+        val filteredShelters = allShelters.filter { it.type in enabledTypes }
+        if (filteredShelters.isEmpty()) {
+            _state.value = _state.value.copy(nextStops = emptyList())
+            return
+        }
+
+        // Find rider's nearest polyline index (sample every 10th for performance)
+        val riderPolylineIdx = polyline.indices
+            .filter { it % 10 == 0 || it == polyline.lastIndex }
+            .minByOrNull { i -> haversineKm(lat, lon, polyline[i].lat, polyline[i].lon) }
+            ?: 0
+
+        // For each shelter, find nearest polyline index and keep only forward ones
+        data class ShelterWithIdx(val shelter: ShelterEntity, val polyIdx: Int, val distKm: Double)
+        val forwardStops = filteredShelters.mapNotNull { shelter ->
+            val nearestIdx = polyline.indices
+                .filter { it % 10 == 0 || it == polyline.lastIndex }
+                .minByOrNull { i ->
+                    haversineKm(shelter.latitude, shelter.longitude, polyline[i].lat, polyline[i].lon)
+                } ?: return@mapNotNull null
+
+            if (nearestIdx <= riderPolylineIdx) return@mapNotNull null  // behind or at rider
+            val distKm = haversineKm(lat, lon, shelter.latitude, shelter.longitude)
+            ShelterWithIdx(shelter, nearestIdx, distKm)
+        }
+            .sortedBy { it.polyIdx }
+            .take(5)
+
+        _state.value = _state.value.copy(nextStops = forwardStops.map { it.shelter })
+        Timber.d("InFlight: %d next stops computed (riderIdx=%d)", forwardStops.size, riderPolylineIdx)
     }
 
     /**

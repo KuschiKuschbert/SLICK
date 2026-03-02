@@ -18,7 +18,7 @@ hiltWork = "1.2.0"
 
 # Database
 room = "2.7.0"
-sqlcipher = "4.5.4"
+sqlcipher = "4.7.0"
 sqliteKtx = "2.5.0"
 
 # Maps
@@ -62,11 +62,11 @@ composeUiTestJunit4 = "1.7.6"
 
 # QR code + camera scan
 qrose = "1.0.1"
-mlkitBarcode = "17.3.0"
-cameraX = "1.4.2"
+mlkitBarcode = "18.3.1"
+cameraX = "1.5.3"
 
 # DataStore
-datastorePreferences = "1.1.2"
+datastorePreferences = "1.2.0"
 
 # Gradle plugins
 secrets = "2.0.1"
@@ -100,7 +100,7 @@ hilt-work-compiler = { group = "androidx.hilt", name = "hilt-compiler", version.
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
-sqlcipher-android = { group = "net.zetetic", name = "android-database-sqlcipher", version.ref = "sqlcipher" }
+sqlcipher-android = { group = "net.zetetic", name = "sqlcipher-android", version.ref = "sqlcipher" }
 sqlite-ktx = { group = "androidx.sqlite", name = "sqlite-ktx", version.ref = "sqliteKtx" }
 
 # MapLibre
@@ -151,7 +151,12 @@ kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "ko
 # qrose removed: KMP library incompatible with pure Android project -- replaced by ZXing
 
 # MLKit barcode scanning (Join Convoy QR scan)
-mlkit-barcode = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkitBarcode" }
+# Switched from bundled com.google.mlkit:barcode-scanning to the Play Services variant.
+# The bundled variant ships libimage_processing_util_jni.so directly into the APK and has an
+# unresolved 16 KB page-size alignment issue (MLKit GitHub #976).
+# The Play Services variant delivers its native models via GMS -- those .so files are NOT
+# bundled in our APK, so we are not responsible for their alignment. API is identical.
+mlkit-barcode = { group = "com.google.android.gms", name = "play-services-mlkit-barcode-scanning", version.ref = "mlkitBarcode" }
 
 # CameraX (for QR scanning)
 camerax-core = { group = "androidx.camera", name = "camera-core", version.ref = "cameraX" }

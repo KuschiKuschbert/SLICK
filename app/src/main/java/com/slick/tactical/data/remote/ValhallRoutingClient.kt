@@ -68,7 +68,7 @@ class ValhallRoutingClient @Inject constructor(
                         type = m.type,
                         instruction = m.instruction,
                         distanceKm = m.length,
-                        timeSeconds = m.time,
+                        timeSeconds = m.time.toInt(),
                         beginShapeIndex = m.beginShapeIndex + shapeIndexOffset,
                     ))
                 }
@@ -116,11 +116,16 @@ class ValhallRoutingClient @Inject constructor(
             }
             add(ValhallLocation(lon = destination.lon, lat = destination.lat, type = "break"))
         }
+        // The public valhalla1.openstreetmap.de endpoint only supports: auto, bicycle, pedestrian.
+        // "motorcycle" requires a self-hosted Valhalla with the motorcycle costing model compiled in.
+        // "auto" gives proper road-following routing with full turn-by-turn maneuvers on the
+        // public endpoint. Motorcycle-specific routing (prefer scenic roads, avoid motorways)
+        // is tracked as a future infrastructure task.
         return Json.encodeToString(
             ValhallRouteRequest.serializer(),
             ValhallRouteRequest(
                 locations = locations,
-                costing = "motorcycle",
+                costing = "auto",
                 directionsOptions = DirectionsOptions(units = "kilometers"),
             ),
         )
@@ -208,7 +213,7 @@ data class ValhallManeuver(
     val type: Int = 0,
     val instruction: String = "",
     val length: Double = 0.0,        // km to next maneuver
-    val time: Int = 0,               // seconds to next maneuver
+    val time: Double = 0.0,          // seconds to next maneuver (Valhalla returns fractional Double)
     @SerialName("begin_shape_index") val beginShapeIndex: Int = 0,
     @SerialName("end_shape_index") val endShapeIndex: Int = 0,
     @SerialName("street_names") val streetNames: List<String> = emptyList(),

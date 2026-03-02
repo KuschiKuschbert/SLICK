@@ -29,6 +29,11 @@ class SlickApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
+        // SQLCipher native library must be loaded before Room opens the encrypted database.
+        // Required by sqlcipher-android (net.zetetic:sqlcipher-android), which replaced the
+        // deprecated android-database-sqlcipher that used the old SQLiteDatabase.loadLibs() API.
+        System.loadLibrary("sqlcipher")
+
         initialiseSentry()
         initialiseTimber()
 

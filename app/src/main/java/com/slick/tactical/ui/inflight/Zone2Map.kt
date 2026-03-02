@@ -72,6 +72,7 @@ private const val SRC_DEST = "slick-dest"
 private const val SRC_RIDER = "slick-rider"
 private const val SRC_SHELTERS = "slick-shelters"
 private const val SRC_HAZARDS = "slick-hazards"
+private const val SRC_NEXT_STOPS = "slick-next-stops"
 
 private const val LYR_ROUTE_CASING = "slick-route-casing"
 private const val LYR_ROUTE = "slick-route-fill"
@@ -81,6 +82,8 @@ private const val LYR_DEST = "slick-dest-dot"
 private const val LYR_SHELTERS = "slick-shelters-dot"
 private const val LYR_SHELTERS_LABEL = "slick-shelters-label"
 private const val LYR_HAZARDS = "slick-hazards-dot"
+private const val LYR_NEXT_STOPS = "slick-next-stops-dot"
+private const val LYR_NEXT_STOPS_LABEL = "slick-next-stops-label"
 private const val LYR_RIDER = "slick-rider-dot"
 
 /**
@@ -106,6 +109,10 @@ fun Zone2Map(
     navState: NavigationState = NavigationState(),
     weatherNodes: List<WeatherNodeEntity> = emptyList(),
     shelters: List<ShelterEntity> = emptyList(),
+    /** POI types to render on the map. Only shelters matching these types are shown. */
+    enabledPoiTypes: Set<String> = emptySet(),
+    /** Next 5 stops ahead of the rider — rendered as larger highlighted markers. */
+    nextStops: List<ShelterEntity> = emptyList(),
     riderLat: Double = -26.7380,
     riderLon: Double = 153.1230,
     riderBearing: Float = 0f,
@@ -206,12 +213,23 @@ fun Zone2Map(
         Timber.d("Zone2Map: route polyline updated (%d pts)", navState.fullPolyline.size)
     }
 
-    // ── Shelter POI markers ───────────────────────────────────────────────────
-    LaunchedEffect(shelters) {
+    // ── Shelter POI markers (filtered by enabledPoiTypes) ────────────────────
+    LaunchedEffect(shelters, enabledPoiTypes, styleLoaded) {
         if (!styleLoaded || shelters.isEmpty()) return@LaunchedEffect
+        val filtered = if (enabledPoiTypes.isEmpty()) shelters
+                       else shelters.filter { it.type in enabledPoiTypes }
         mapRef?.getStyle()?.getSourceAs<GeoJsonSource>(SRC_SHELTERS)
-            ?.setGeoJson(shelterFeatureCollection(shelters))
-        Timber.d("Zone2Map: %d shelter markers updated", shelters.size)
+            ?.setGeoJson(shelterFeatureCollection(filtered))
+        Timber.d("Zone2Map: %d/%d shelter markers rendered (filter=%s)",
+            filtered.size, shelters.size, enabledPoiTypes.joinToString())
+    }
+
+    // ── Next 5 stops ahead of the rider — highlighted markers ────────────────
+    LaunchedEffect(nextStops, styleLoaded) {
+        if (!styleLoaded) return@LaunchedEffect
+        mapRef?.getStyle()?.getSourceAs<GeoJsonSource>(SRC_NEXT_STOPS)
+            ?.setGeoJson(nextStopsFeatureCollection(nextStops))
+        Timber.d("Zone2Map: %d next-stop markers updated", nextStops.size)
     }
 
     // ── GripMatrix gradient: updated when weather sync completes ─────────────
@@ -334,6 +352,7 @@ private fun addAllLayers(style: Style) {
     style.addSource(GeoJsonSource(SRC_DEST))
     style.addSource(GeoJsonSource(SRC_SHELTERS))
     style.addSource(GeoJsonSource(SRC_HAZARDS))
+    style.addSource(GeoJsonSource(SRC_NEXT_STOPS))
     style.addSource(GeoJsonSource(SRC_RIDER))
 
     // Route casing: dark outline so the route is visible over any base tile
@@ -352,15 +371,15 @@ private fun addAllLayers(style: Style) {
         },
     )
 
-    // GripMatrix gradient: weather-coloured overlay (starts grey/dry)
+    // GripMatrix gradient: weather-coloured overlay (starts green = no data = assume clear)
     style.addLayer(
         LineLayer(LYR_GRIP, SRC_GRIP).apply {
             setProperties(
                 lineCap(LINE_CAP_ROUND), lineJoin(LINE_JOIN_ROUND), lineWidth(8f),
                 lineGradient(
                     interpolate(linear(), lineProgress(),
-                        stop(0f, color(Color.parseColor("#9E9E9E"))),
-                        stop(1f, color(Color.parseColor("#9E9E9E"))),
+                        stop(0f, color(Color.parseColor("#4CAF50"))),
+                        stop(1f, color(Color.parseColor("#4CAF50"))),
                     ),
                 ),
             )
@@ -440,12 +459,46 @@ private fun addAllLayers(style: Style) {
                 ),
                 circleColor(
                     match(get("danger"),
-                        literal("EXTREME"), color(Color.parseColor("#FF5722")),
-                        color(Color.parseColor("#FF9800")),  // HIGH = amber
+                        literal("EXTREME"), color(Color.parseColor("#F44336")),  // Red
+                        color(Color.parseColor("#FF9800")),                       // HIGH = orange
                     ),
                 ),
                 circleStrokeColor("#FFFFFF"),
                 circleStrokeWidth(2f),
+            )
+        },
+    )
+
+    // ── Next 5 stops ahead — larger, bright markers with white stroke (topmost POI layer) ──
+    style.addLayer(
+        CircleLayer(LYR_NEXT_STOPS, SRC_NEXT_STOPS).apply {
+            setProperties(
+                circleRadius(13f),
+                circleColor(
+                    match(get("category"),
+                        literal("critical"), color(Color.parseColor("#FF9800")),
+                        literal("cover"), color(Color.parseColor("#CE93D8")),
+                        color(Color.parseColor("#9E9E9E")),
+                    ),
+                ),
+                circleStrokeColor("#FFFFFF"),
+                circleStrokeWidth(3f),
+            )
+        },
+    )
+
+    // Next-stop name label — always visible (no min-zoom restriction)
+    style.addLayer(
+        SymbolLayer(LYR_NEXT_STOPS_LABEL, SRC_NEXT_STOPS).apply {
+            setProperties(
+                textField(get("name")),
+                textSize(12f),
+                textColor("#FFFFFF"),
+                textHaloColor("#000000"),
+                textHaloWidth(2f),
+                textOffset(arrayOf(0f, 1.8f)),
+                textAllowOverlap(false),
+                textIgnorePlacement(false),
             )
         },
     )
@@ -494,6 +547,35 @@ private fun shelterFeatureCollection(shelters: List<ShelterEntity>): String {
 }
 
 /**
+ * Builds a GeoJSON FeatureCollection for the next 5 POIs ahead of the rider.
+ * Uses the same "category" property as shelterFeatureCollection for consistent colour coding,
+ * but these markers are rendered larger with a brighter white stroke to stand out.
+ */
+private fun nextStopsFeatureCollection(stops: List<ShelterEntity>): String {
+    if (stops.isEmpty()) return """{"type":"FeatureCollection","features":[]}"""
+    val features = stops.mapIndexed { idx, shelter ->
+        val category = when (shelter.type) {
+            ShelterType.FUEL, ShelterType.REST_AREA -> "critical"
+            ShelterType.PUB, ShelterType.CAFE, ShelterType.HOTEL, ShelterType.CONVENIENCE -> "cover"
+            else -> "amenity"
+        }
+        val safeName = shelter.name.replace("\"", "'").replace("\\", "")
+        val icon = when (shelter.type) {
+            ShelterType.FUEL -> "⛽"
+            ShelterType.PUB -> "🍺"
+            ShelterType.CAFE -> "☕"
+            ShelterType.HOTEL -> "🏨"
+            ShelterType.REST_AREA -> "🛑"
+            ShelterType.CONVENIENCE -> "🛒"
+            else -> "•"
+        }
+        val label = "${idx + 1}. $icon $safeName"
+        """{"type":"Feature","geometry":{"type":"Point","coordinates":[${shelter.longitude},${shelter.latitude}]},"properties":{"name":"$label","category":"$category","type":"${shelter.type}"}}"""
+    }
+    return """{"type":"FeatureCollection","features":[${features.joinToString(",")}]}"""
+}
+
+/**
  * Builds a GeoJSON FeatureCollection for HIGH and EXTREME weather nodes.
  * Only includes nodes that are hazardous — DRY and MODERATE nodes are skipped
  * (they're already visible from the GripMatrix gradient colour).
@@ -522,8 +604,8 @@ private fun buildGradientStops(
     val total = nodes.size
     if (total < 2) {
         return interpolate(linear(), lineProgress(),
-            stop(0f, color(Color.parseColor("#9E9E9E"))),
-            stop(1f, color(Color.parseColor("#9E9E9E"))),
+            stop(0f, color(Color.parseColor("#4CAF50"))),   // Green — no data = assume clear
+            stop(1f, color(Color.parseColor("#4CAF50"))),
         )
     }
     val stops = nodes.mapIndexed { i, node ->

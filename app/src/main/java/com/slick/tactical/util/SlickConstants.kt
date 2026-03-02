@@ -1,5 +1,17 @@
 package com.slick.tactical.util
 
+import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.preferencesDataStore
+
+/**
+ * Single shared DataStore instance for SLICK user preferences.
+ * Declared once here so all ViewModels share the same underlying file and avoid
+ * the DataStore multiple-instance-per-file warning.
+ */
+val Context.slickSettingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "slick_settings")
+
 /**
  * Central constants for SLICK. No magic numbers anywhere in the codebase.
  * All values documented with units and rationale.

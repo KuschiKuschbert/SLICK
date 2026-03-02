@@ -92,6 +92,7 @@ fun InFlightHudScreen(
                 remainingDistanceKm = uiState.remainingDistanceKm,
                 nextHazard = uiState.nextHazard,
                 nearestShelter = uiState.nearestShelter,
+                nextStops = uiState.nextStops,
                 isTablet = isTablet,
             )
 
@@ -164,6 +165,7 @@ fun Zone1Header(
     remainingDistanceKm: Double = 0.0,
     nextHazard: HazardAlert? = null,
     nearestShelter: com.slick.tactical.data.local.entity.ShelterEntity? = null,
+    nextStops: List<com.slick.tactical.data.local.entity.ShelterEntity> = emptyList(),
     isTablet: Boolean = false,
 ) {
     val arrowFontSize = if (isTablet) 34 else 28
@@ -247,6 +249,30 @@ fun Zone1Header(
                 fontSize = instrFontSize,
             )
         }
+
+        // Next stop: show nearest filtered POI ahead along the route
+        val nearestStop = nextStops.firstOrNull()
+        if (nearestStop != null) {
+            val stopIcon = when (nearestStop.type) {
+                com.slick.tactical.data.remote.ShelterType.FUEL -> "⛽"
+                com.slick.tactical.data.remote.ShelterType.PUB -> "🍺"
+                com.slick.tactical.data.remote.ShelterType.CAFE -> "☕"
+                com.slick.tactical.data.remote.ShelterType.HOTEL -> "🏨"
+                com.slick.tactical.data.remote.ShelterType.REST_AREA -> "🛑"
+                com.slick.tactical.data.remote.ShelterType.CONVENIENCE -> "🛒"
+                com.slick.tactical.data.remote.ShelterType.TOILET -> "🚻"
+                com.slick.tactical.data.remote.ShelterType.WATER -> "💧"
+                else -> "🏠"
+            }
+            Text(
+                text = "$stopIcon ${nearestStop.name}",
+                color = SlickColors.DataSecondary,
+                fontSize = instrFontSize.sp,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
     }
 }
 
@@ -254,9 +280,10 @@ fun Zone1Header(
  * Compact single-line weather hazard strip for Zone 1.
  *
  * Colour-coded by danger level:
- * - MODERATE → Wash cyan
- * - HIGH → amber
- * - EXTREME → Alert orange (flashes)
+ * - DRY → Green (optimal)
+ * - MODERATE → Yellow (light moisture)
+ * - HIGH → Orange (active rain / strong crosswind)
+ * - EXTREME → Red (severe — find cover)
  *
  * Shows: "⚠ RAIN 3mm · CROSSWIND 28km/h in 45km · SERVO 2.1km"
  */
@@ -267,9 +294,10 @@ private fun WeatherStrip(
     fontSize: Int,
 ) {
     val stripColor = when (hazard.dangerLevel) {
-        com.slick.tactical.engine.weather.GripMatrix.DangerLevel.EXTREME -> SlickColors.Alert
-        com.slick.tactical.engine.weather.GripMatrix.DangerLevel.HIGH -> Color(0xFFFF9800)
-        else -> SlickColors.Wash
+        com.slick.tactical.engine.weather.GripMatrix.DangerLevel.EXTREME -> Color(0xFFF44336)  // Red
+        com.slick.tactical.engine.weather.GripMatrix.DangerLevel.HIGH -> Color(0xFFFF9800)      // Orange
+        com.slick.tactical.engine.weather.GripMatrix.DangerLevel.MODERATE -> Color(0xFFFFEB3B)  // Yellow
+        else -> Color(0xFF4CAF50)                                                               // Green — clear
     }
 
     val distText = when {
@@ -316,6 +344,8 @@ fun Zone2MapWrapper(
         navState = state.navState,
         weatherNodes = state.weatherNodes,
         shelters = state.shelters,
+        enabledPoiTypes = state.enabledPoiTypes,
+        nextStops = state.nextStops,
         riderLat = state.riderLat,
         riderLon = state.riderLon,
         riderBearing = state.riderBearingDeg,
