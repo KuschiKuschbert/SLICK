@@ -49,8 +49,15 @@ class RouteRepository @Inject constructor(
     private val routeStateHolder: RouteStateHolder,
 ) {
 
-    /** Observed by the UI. Emits updated node list whenever Room changes. */
+    /** Observed by the UI for GripMatrix gradient colours. */
     fun observeNodes(): Flow<List<WeatherNodeEntity>> = weatherNodeDao.observeAllNodes()
+
+    /**
+     * Live shelter POIs for the given route corridor.
+     * Collected by [com.slick.tactical.ui.inflight.InFlightViewModel] to render shelter markers.
+     */
+    fun observeShelters(corridorId: String): Flow<List<com.slick.tactical.data.local.entity.ShelterEntity>> =
+        shelterDao.observeSheltersForCorridor(corridorId)
 
     /**
      * Full pre-flight pipeline:
@@ -84,6 +91,8 @@ class RouteRepository @Inject constructor(
             totalDistanceKm = 0.0
         }
 
+        val corridorId = "${origin.lat}_${origin.lon}_${destination.lat}_${destination.lon}"
+
         // Publish full route to RouteStateHolder -- drives Zone2Map polyline + navigation
         routeStateHolder.setRoute(
             polyline = polyline,
@@ -91,6 +100,7 @@ class RouteRepository @Inject constructor(
             origin = origin,
             destination = destination,
             totalDistanceKm = totalDistanceKm,
+            corridorId = corridorId,
         )
 
         Timber.i("Route: %d polyline pts, %d maneuvers", polyline.size, maneuvers.size)
@@ -100,7 +110,6 @@ class RouteRepository @Inject constructor(
             .getOrElse { return@withContext Result.failure(it) }
 
         // Step 3: Fetch emergency shelters from Overpass (best-effort, non-blocking)
-        val corridorId = "${origin.lat}_${origin.lon}_${destination.lat}_${destination.lon}"
         overpassClient.fetchSheltersAlongRoute(
             nodes = polyline.filterIndexed { i, _ -> i % 10 == 0 },
             routeCorridorId = corridorId,

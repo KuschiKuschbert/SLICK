@@ -33,6 +33,7 @@ class RouteStateHolder @Inject constructor() {
         origin: Coordinate,
         destination: Coordinate,
         totalDistanceKm: Double,
+        corridorId: String = "",
     ) {
         _state.value = NavigationState(
             fullPolyline = polyline,
@@ -40,6 +41,7 @@ class RouteStateHolder @Inject constructor() {
             origin = origin,
             destination = destination,
             totalDistanceKm = totalDistanceKm,
+            corridorId = corridorId,
             hasRoute = true,
         )
         Timber.i("RouteStateHolder: route set (%d polyline pts, %d maneuvers, %.1f km)",
@@ -141,6 +143,7 @@ data class NavigationState(
     val origin: Coordinate? = null,
     val destination: Coordinate? = null,
     val totalDistanceKm: Double = 0.0,
+    val corridorId: String = "",
     val hasRoute: Boolean = false,
 ) {
     val polyline: List<Coordinate> get() = fullPolyline

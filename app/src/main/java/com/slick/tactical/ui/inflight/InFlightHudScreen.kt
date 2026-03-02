@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -85,6 +86,8 @@ fun InFlightHudScreen(
                 nextTurnInstruction = uiState.nextTurnInstruction,
                 speedKmh = uiState.speedKmh,
                 eta24h = uiState.eta24h,
+                nextHazard = uiState.nextHazard,
+                nearestShelter = uiState.nearestShelter,
                 isTablet = isTablet,
             )
 
@@ -131,6 +134,8 @@ fun Zone1Header(
     nextTurnInstruction: String = "Follow route",
     speedKmh: Double,
     eta24h: String,
+    nextHazard: HazardAlert? = null,
+    nearestShelter: com.slick.tactical.data.local.entity.ShelterEntity? = null,
     isTablet: Boolean = false,
 ) {
     val arrowFontSize = if (isTablet) 34 else 28
@@ -192,7 +197,70 @@ fun Zone1Header(
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
         }
+
+        // Hazard strip: only visible when conditions are not DRY
+        if (nextHazard != null) {
+            WeatherStrip(
+                hazard = nextHazard,
+                shelter = nearestShelter,
+                fontSize = instrFontSize,
+            )
+        }
     }
+}
+
+/**
+ * Compact single-line weather hazard strip for Zone 1.
+ *
+ * Colour-coded by danger level:
+ * - MODERATE → Wash cyan
+ * - HIGH → amber
+ * - EXTREME → Alert orange (flashes)
+ *
+ * Shows: "⚠ RAIN 3mm · CROSSWIND 28km/h in 45km · SERVO 2.1km"
+ */
+@Composable
+private fun WeatherStrip(
+    hazard: HazardAlert,
+    shelter: com.slick.tactical.data.local.entity.ShelterEntity?,
+    fontSize: Int,
+) {
+    val stripColor = when (hazard.dangerLevel) {
+        com.slick.tactical.engine.weather.GripMatrix.DangerLevel.EXTREME -> SlickColors.Alert
+        com.slick.tactical.engine.weather.GripMatrix.DangerLevel.HIGH -> Color(0xFFFF9800)
+        else -> SlickColors.Wash
+    }
+
+    val distText = when {
+        hazard.distanceMetres >= 1000 -> "in ${"%.0f".format(hazard.distanceMetres / 1000.0)}km"
+        else -> "in ${hazard.distanceMetres}m"
+    }
+
+    val parts = mutableListOf<String>()
+    if (hazard.rainfallStatus.contains("rain", ignoreCase = true) ||
+        hazard.rainfallStatus.contains("wetness", ignoreCase = true)) {
+        // Extract the key phrase (before the dash if present)
+        val key = hazard.rainfallStatus.substringBefore(" -").take(20)
+        parts.add(key)
+    }
+    if (hazard.crosswindKmh > 15.0) {
+        parts.add("CROSSWIND ${"%.0f".format(hazard.crosswindKmh)}km/h")
+    }
+
+    val shelterText = shelter?.let { s ->
+        "  ·  ${s.name.take(14)} →"
+    } ?: ""
+
+    val text = "⚠ ${parts.joinToString(" · ")} $distText$shelterText"
+
+    Text(
+        text = text,
+        color = stripColor,
+        fontSize = fontSize.sp,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+        maxLines = 1,
+        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+    )
 }
 
 /** Zone 2: MapLibre render — delegates to Zone2Map.kt. */
@@ -206,6 +274,7 @@ fun Zone2MapWrapper(
         modifier = modifier,
         navState = state.navState,
         weatherNodes = state.weatherNodes,
+        shelters = state.shelters,
         riderLat = state.riderLat,
         riderLon = state.riderLon,
         riderBearing = state.riderBearingDeg,
