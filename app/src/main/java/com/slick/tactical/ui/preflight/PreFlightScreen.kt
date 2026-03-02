@@ -2,66 +2,105 @@ package com.slick.tactical.ui.preflight
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.slick.tactical.ui.theme.SlickColors
+import kotlinx.coroutines.launch
+
+private val TABS = listOf("ROUTE", "CONVOY", "SETTINGS")
 
 /**
- * Pre-Flight container screen with three tabs:
- * 1. ROUTE -- coordinate input + GripMatrix weather sync
- * 2. CONVOY -- create/join lobby + QR code
- * 3. SETTINGS -- weather strategy, battery optimization, convoy prefs
+ * Pre-Flight container screen.
  *
- * Standard Material Design allowed here (kickstand down, bike stationary).
- * Tactical OLED HUD activates only In-Flight.
+ * Three tabs presented as a swipeable [HorizontalPager] -- the rider can swipe between
+ * ROUTE / CONVOY / SETTINGS without tapping the tab bar. The tab indicator animates
+ * smoothly as the page scrolls (fractional position tracking via [PagerState.currentPageOffsetFraction]).
+ *
+ * Insets: [WindowInsets.safeDrawing] applied at the root so that the tab bar sits
+ * below the status bar and the content avoids notches/punch-hole cameras on all devices.
+ * On tablets, the safe area is minimal but still applied correctly.
+ *
+ * Standard Material 3 allowed here (kickstand down, bike stationary).
  */
 @Composable
 fun PreFlightScreen(
     onStartConvoy: () -> Unit,
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("ROUTE", "CONVOY", "SETTINGS")
+    val pagerState = rememberPagerState(initialPage = 0, pageCount = { TABS.size })
+    val scope = rememberCoroutineScope()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(SlickColors.Void),
+            .background(SlickColors.Void)
+            // Respect system bars, camera cutout, and rounded corners
+            .windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
+        // Synced tab indicator tracks pager scroll fractionally
         TabRow(
-            selectedTabIndex = selectedTab,
+            selectedTabIndex = pagerState.currentPage,
             containerColor = SlickColors.Surface,
             contentColor = SlickColors.Alert,
+            indicator = { tabPositions ->
+                if (tabPositions.isNotEmpty()) {
+                    TabRowDefaults.SecondaryIndicator(
+                        modifier = Modifier.tabIndicatorOffset(
+                            tabPositions[pagerState.currentPage],
+                        ),
+                        color = SlickColors.Alert,
+                    )
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            tabs.forEachIndexed { index, title ->
+            TABS.forEachIndexed { index, title ->
                 Tab(
-                    selected = selectedTab == index,
-                    onClick = { selectedTab = index },
+                    selected = pagerState.currentPage == index,
+                    onClick = {
+                        scope.launch { pagerState.animateScrollToPage(index) }
+                    },
                     text = {
                         Text(
                             text = title,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (selectedTab == index) SlickColors.Alert else SlickColors.DataSecondary,
+                            color = if (pagerState.currentPage == index) SlickColors.Alert
+                            else SlickColors.DataSecondary,
                         )
                     },
                 )
             }
         }
 
-        when (selectedTab) {
-            0 -> RouteConfigContent(onStartConvoy = onStartConvoy)
-            1 -> ConvoyLobbyScreen()
-            2 -> SettingsScreen()
+        // Swipeable content
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            // Allow vertical scroll within each page without conflicting with pager swipe
+            beyondViewportPageCount = 1,
+        ) { page ->
+            when (page) {
+                0 -> RouteConfigContent(onStartConvoy = onStartConvoy)
+                1 -> ConvoyLobbyScreen()
+                2 -> SettingsScreen()
+            }
         }
     }
 }

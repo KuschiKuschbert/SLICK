@@ -13,12 +13,19 @@ import timber.log.Timber
 import javax.inject.Inject
 
 data class PreFlightUiState(
-    val originLat: String = "-26.7380",   // Default: Kawana
-    val originLon: String = "153.1230",
-    val destinationLat: String = "-23.1300",  // Default: Yeppoon
-    val destinationLon: String = "150.7400",
+    // Place search fields -- displayed name in the search bar
+    val originQuery: String = "Kawana Waters, QLD",
+    val destinationQuery: String = "Yeppoon, QLD",
+
+    // Resolved coordinates (set when user selects a suggestion or types raw coords)
+    val originLat: Double = -26.7380,
+    val originLon: Double = 153.1230,
+    val destinationLat: Double = -23.1297,
+    val destinationLon: Double = 150.7417,
+
     val averageSpeedKmh: String = "100",
     val departureTime24h: String = "08:00",
+
     val isSyncing: Boolean = false,
     val syncedNodeCount: Int = 0,
     val syncError: String? = null,
@@ -28,10 +35,11 @@ data class PreFlightUiState(
 /**
  * ViewModel for the Pre-Flight configuration screen.
  *
- * Manages route input and triggers the full weather sync pipeline:
- * Valhalla polyline → Haversine node slicing → Open-Meteo weather → Room DB
+ * Place search: [onOriginQueryChange] / [onDestinationQueryChange] update the text field.
+ * [onOriginSelected] / [onDestinationSelected] are called when the user picks a suggestion,
+ * resolving the display name and coordinates simultaneously.
  *
- * The convoy can only be started once [isSyncComplete] is true (weather loaded).
+ * Weather sync pipeline: Valhalla routing → Haversine node slicing → Open-Meteo → Room DB
  */
 @HiltViewModel
 class PreFlightViewModel @Inject constructor(
@@ -41,21 +49,41 @@ class PreFlightViewModel @Inject constructor(
     private val _state = MutableStateFlow(PreFlightUiState())
     val state: StateFlow<PreFlightUiState> = _state.asStateFlow()
 
-    fun onOriginLatChanged(value: String) {
-        _state.value = _state.value.copy(originLat = value, syncError = null, isSyncComplete = false)
+    // ─── Origin search ──────────────────────────────────────────────────────
+
+    fun onOriginQueryChange(query: String) {
+        _state.value = _state.value.copy(originQuery = query, syncError = null, isSyncComplete = false)
     }
 
-    fun onOriginLonChanged(value: String) {
-        _state.value = _state.value.copy(originLon = value, syncError = null, isSyncComplete = false)
+    fun onOriginSelected(displayName: String, lat: Double, lon: Double) {
+        Timber.d("Origin selected: %s (%.4f, %.4f)", displayName, lat, lon)
+        _state.value = _state.value.copy(
+            originQuery = displayName,
+            originLat = lat,
+            originLon = lon,
+            syncError = null,
+            isSyncComplete = false,
+        )
     }
 
-    fun onDestinationLatChanged(value: String) {
-        _state.value = _state.value.copy(destinationLat = value, syncError = null, isSyncComplete = false)
+    // ─── Destination search ─────────────────────────────────────────────────
+
+    fun onDestinationQueryChange(query: String) {
+        _state.value = _state.value.copy(destinationQuery = query, syncError = null, isSyncComplete = false)
     }
 
-    fun onDestinationLonChanged(value: String) {
-        _state.value = _state.value.copy(destinationLon = value, syncError = null, isSyncComplete = false)
+    fun onDestinationSelected(displayName: String, lat: Double, lon: Double) {
+        Timber.d("Destination selected: %s (%.4f, %.4f)", displayName, lat, lon)
+        _state.value = _state.value.copy(
+            destinationQuery = displayName,
+            destinationLat = lat,
+            destinationLon = lon,
+            syncError = null,
+            isSyncComplete = false,
+        )
     }
+
+    // ─── Ride parameters ────────────────────────────────────────────────────
 
     fun onAverageSpeedChanged(value: String) {
         _state.value = _state.value.copy(averageSpeedKmh = value)
@@ -65,35 +93,31 @@ class PreFlightViewModel @Inject constructor(
         _state.value = _state.value.copy(departureTime24h = value)
     }
 
+    // ─── Weather sync pipeline ──────────────────────────────────────────────
+
     /**
      * Triggers the full pre-flight pipeline:
-     * Valhalla routing → Haversine node slicing → Open-Meteo weather sync → Room DB
-     *
-     * Populates [state.syncedNodeCount] on success or [state.syncError] on failure.
+     * Valhalla routing → Haversine node slicing → Open-Meteo weather → Room DB
      */
     fun syncRouteWeather() {
         val current = _state.value
-        val origin = parseCoordinate(current.originLat, current.originLon)
-            ?: run {
-                _state.value = _state.value.copy(syncError = "Invalid origin coordinates")
-                return
-            }
-        val destination = parseCoordinate(current.destinationLat, current.destinationLon)
-            ?: run {
-                _state.value = _state.value.copy(syncError = "Invalid destination coordinates")
-                return
-            }
-        val speed = current.averageSpeedKmh.toDoubleOrNull()
-            ?: run {
-                _state.value = _state.value.copy(syncError = "Invalid speed: must be a number in km/h")
-                return
-            }
+        val speed = current.averageSpeedKmh.toDoubleOrNull() ?: run {
+            _state.value = _state.value.copy(syncError = "Invalid speed: must be a number in km/h")
+            return
+        }
+
+        val origin = Coordinate(current.originLat, current.originLon)
+        val destination = Coordinate(current.destinationLat, current.destinationLon)
 
         viewModelScope.launch {
             _state.value = _state.value.copy(isSyncing = true, syncError = null, isSyncComplete = false)
-            Timber.i("Pre-flight sync: (%.4f,%.4f) → (%.4f,%.4f) at %.0f km/h departing %s",
-                origin.lat, origin.lon, destination.lat, destination.lon,
-                speed, current.departureTime24h)
+            Timber.i(
+                "Pre-flight sync: %s → %s at %.0f km/h departing %s",
+                current.originQuery,
+                current.destinationQuery,
+                speed,
+                current.departureTime24h,
+            )
 
             routeRepository.fetchRouteAndSync(
                 origin = origin,
@@ -118,12 +142,5 @@ class PreFlightViewModel @Inject constructor(
                 },
             )
         }
-    }
-
-    private fun parseCoordinate(latStr: String, lonStr: String): Coordinate? {
-        val lat = latStr.toDoubleOrNull() ?: return null
-        val lon = lonStr.toDoubleOrNull() ?: return null
-        if (lat !in -90.0..90.0 || lon !in -180.0..180.0) return null
-        return Coordinate(lat, lon)
     }
 }

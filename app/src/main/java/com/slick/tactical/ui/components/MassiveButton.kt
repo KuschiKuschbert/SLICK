@@ -8,18 +8,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 
 /**
  * Massive glove-friendly tap target for Zone 3 interaction deck.
  *
  * Jobs Protocol enforcement:
- * - Minimum height: 64dp (set by caller via Modifier)
- * - Font: 18sp ExtraBold, letter-spaced (legible through heavy leather gloves)
- * - Color: always high-contrast on dark or alert background
- *
- * The caller is responsible for setting `.height(64.dp)` and `.weight(1f)`
- * to ensure 50% screen width and adequate hit area.
+ * - Minimum height: 64dp phone / 80dp tablet (set by caller via Modifier)
+ * - Default font: 18sp ExtraBold, 14sp minimum per Jobs Protocol
+ * - Always high-contrast on dark or alert background
+ * - [fontSize] overrideable for tablet adaptation
  */
 @Composable
 fun MassiveButton(
@@ -28,6 +27,7 @@ fun MassiveButton(
     containerColor: Color,
     contentColor: Color,
     modifier: Modifier = Modifier,
+    fontSize: TextUnit = 18.sp,
 ) {
     Button(
         onClick = onClick,
@@ -39,7 +39,7 @@ fun MassiveButton(
     ) {
         Text(
             text = text,
-            fontSize = 18.sp,
+            fontSize = fontSize,
             fontWeight = FontWeight.ExtraBold,
             letterSpacing = 1.5.sp,
         )

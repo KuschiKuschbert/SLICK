@@ -30,12 +30,18 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.slick.tactical.ui.components.PlaceSearchBar
 import com.slick.tactical.ui.theme.SlickColors
 
 /**
- * Route configuration tab -- origin/destination coordinates, speed, departure time.
+ * Route configuration tab.
  *
- * Triggers the full Valhalla → GripMatrix → Open-Meteo weather sync pipeline.
+ * Origin and destination are entered via a Waze-style search bar:
+ * - Type a town/suburb name → suggestions appear in a tactical dark dropdown
+ * - Offline fallback: QLD corridor towns + all Australian capital cities
+ * - Online: Android Geocoder (Google Places, no API key on Android)
+ *
+ * Ride parameters (speed, departure time) remain as text fields.
  * START CONVOY is enabled once weather nodes are synced.
  */
 @Composable
@@ -50,7 +56,7 @@ fun RouteConfigContent(
             .fillMaxSize()
             .background(SlickColors.Void)
             .verticalScroll(rememberScrollState())
-            .padding(24.dp),
+            .padding(horizontal = 24.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(
@@ -60,32 +66,57 @@ fun RouteConfigContent(
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
         )
-        Text("Pre-Flight Route Configuration", color = SlickColors.DataSecondary, fontSize = 14.sp)
+        Text(
+            text = "Pre-Flight Route Configuration",
+            color = SlickColors.DataSecondary,
+            fontSize = 14.sp,
+        )
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
+        // ── Origin search ────────────────────────────────────────────────────
         SectionLabel("ORIGIN")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SlickTextField(state.originLat, viewModel::onOriginLatChanged, "Lat", Modifier.weight(1f))
-            SlickTextField(state.originLon, viewModel::onOriginLonChanged, "Lon", Modifier.weight(1f))
-        }
-        Text("e.g. Kawana: -26.7380, 153.1230", color = SlickColors.DataSecondary, fontSize = 12.sp)
+        PlaceSearchBar(
+            label = "Departure town or city",
+            query = state.originQuery,
+            onQueryChange = viewModel::onOriginQueryChange,
+            onPlaceSelected = viewModel::onOriginSelected,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        CoordinateReadout(lat = state.originLat, lon = state.originLon)
 
+        // ── Destination search ───────────────────────────────────────────────
         SectionLabel("DESTINATION")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SlickTextField(state.destinationLat, viewModel::onDestinationLatChanged, "Lat", Modifier.weight(1f))
-            SlickTextField(state.destinationLon, viewModel::onDestinationLonChanged, "Lon", Modifier.weight(1f))
-        }
-        Text("e.g. Yeppoon: -23.1300, 150.7400", color = SlickColors.DataSecondary, fontSize = 12.sp)
+        PlaceSearchBar(
+            label = "Arrival town or city",
+            query = state.destinationQuery,
+            onQueryChange = viewModel::onDestinationQueryChange,
+            onPlaceSelected = viewModel::onDestinationSelected,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        CoordinateReadout(lat = state.destinationLat, lon = state.destinationLon)
 
+        // ── Ride parameters ──────────────────────────────────────────────────
         SectionLabel("RIDE PARAMETERS")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SlickTextField(state.averageSpeedKmh, viewModel::onAverageSpeedChanged, "Avg Speed (km/h)", Modifier.weight(1f))
-            SlickTextField(state.departureTime24h, viewModel::onDepartureTimeChanged, "Depart (HH:mm)", Modifier.weight(1f))
+            SlickTextField(
+                value = state.averageSpeedKmh,
+                onValueChange = viewModel::onAverageSpeedChanged,
+                label = "Avg Speed (km/h)",
+                modifier = Modifier.weight(1f),
+            )
+            SlickTextField(
+                value = state.departureTime24h,
+                onValueChange = viewModel::onDepartureTimeChanged,
+                label = "Depart (HH:mm)",
+                modifier = Modifier.weight(1f),
+                keyboardType = KeyboardType.Number,
+            )
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
+        // ── Sync status ──────────────────────────────────────────────────────
         when {
             state.isSyncing -> Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -107,6 +138,7 @@ fun RouteConfigContent(
             )
         }
 
+        // ── Actions ──────────────────────────────────────────────────────────
         Button(
             onClick = viewModel::syncRouteWeather,
             enabled = !state.isSyncing,
@@ -146,17 +178,36 @@ fun RouteConfigContent(
         }
 
         Text(
-            "Weather resolution: ~1km. Labels are Observed probabilities, not surface sensors.",
+            "Weather resolution: ~1 km. Forecasts are observed probabilities, not road surface sensors.",
             color = SlickColors.DataSecondary,
             fontSize = 11.sp,
             lineHeight = 16.sp,
         )
+
+        Spacer(modifier = Modifier.height(8.dp))
     }
+}
+
+/** Small coordinate readout shown below each search bar after a place is selected. */
+@Composable
+private fun CoordinateReadout(lat: Double, lon: Double) {
+    Text(
+        text = "%.4f, %.4f".format(lat, lon),
+        color = SlickColors.DataSecondary,
+        fontSize = 11.sp,
+        fontFamily = FontFamily.Monospace,
+    )
 }
 
 @Composable
 internal fun SectionLabel(text: String) {
-    Text(text, color = SlickColors.DataSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+    Text(
+        text = text,
+        color = SlickColors.DataSecondary,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 2.sp,
+    )
 }
 
 @Composable
@@ -165,13 +216,14 @@ internal fun SlickTextField(
     onValueChange: (String) -> Unit,
     label: String,
     modifier: Modifier = Modifier,
+    keyboardType: KeyboardType = KeyboardType.Decimal,
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         label = { Text(label, color = SlickColors.DataSecondary, fontSize = 12.sp) },
         singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         colors = OutlinedTextFieldDefaults.colors(
             focusedTextColor = SlickColors.DataPrimary,
             unfocusedTextColor = SlickColors.DataPrimary,

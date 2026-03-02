@@ -5,9 +5,17 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -24,15 +32,14 @@ import timber.log.Timber
 import javax.inject.Inject
 
 /**
- * Single activity hosting all SLICK screens via Jetpack Navigation Compose.
+ * Single activity. Edge-to-edge enabled -- the app draws behind status bar and
+ * navigation bar, then uses [WindowInsets.safeDrawing] per-screen to pad content
+ * away from notches, punch-hole cameras, and rounded corners.
  *
  * Navigation destinations:
- * - "preflight" -- Route config, convoy setup, settings (kickstand down)
- * - "inflight" -- Tactical HUD with MapLibre + GripMatrix (kickstand up)
- * - "survival" -- Text-only HUD (battery < 15%)
- *
- * The [ConvoyForegroundService] is started when the user initiates a convoy session.
- * It persists independently of this Activity's lifecycle.
+ * - "preflight"  -- Route config, convoy setup, settings (kickstand down)
+ * - "inflight"   -- Tactical OLED HUD with MapLibre + GripMatrix (in motion)
+ * - "survival"   -- Text-only black HUD (battery < 15%)
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -42,9 +49,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Draw behind system bars -- each screen applies its own inset padding
         enableEdgeToEdge()
 
-        Timber.d("MainActivity created")
         activityRecognitionManager.startMonitoring()
 
         setContent {
@@ -56,7 +64,7 @@ class MainActivity : ComponentActivity() {
                 val navController = rememberNavController()
                 val currentRoute by navController.currentBackStackEntryAsState()
 
-                // Auto-transition to In-Flight when Android detects IN_VEHICLE
+                // Auto-transition to InFlight when ActivityRecognition detects IN_VEHICLE
                 LaunchedEffect(isInVehicle) {
                     val current = currentRoute?.destination?.route
                     if (isInVehicle && current == "preflight") {
@@ -71,6 +79,32 @@ class MainActivity : ComponentActivity() {
                 NavHost(
                     navController = navController,
                     startDestination = "preflight",
+                    modifier = Modifier.fillMaxSize(),
+                    // Slide left/right between screens
+                    enterTransition = {
+                        slideIntoContainer(
+                            AnimatedContentTransitionScope.SlideDirection.Start,
+                            tween(300),
+                        )
+                    },
+                    exitTransition = {
+                        slideOutOfContainer(
+                            AnimatedContentTransitionScope.SlideDirection.Start,
+                            tween(300),
+                        )
+                    },
+                    popEnterTransition = {
+                        slideIntoContainer(
+                            AnimatedContentTransitionScope.SlideDirection.End,
+                            tween(300),
+                        )
+                    },
+                    popExitTransition = {
+                        slideOutOfContainer(
+                            AnimatedContentTransitionScope.SlideDirection.End,
+                            tween(300),
+                        )
+                    },
                 ) {
                     composable("preflight") {
                         PreFlightScreen(
@@ -86,6 +120,11 @@ class MainActivity : ComponentActivity() {
                         InFlightHudScreen(
                             onSurvivalMode = {
                                 navController.navigate("survival") {
+                                    popUpTo("inflight") { inclusive = true }
+                                }
+                            },
+                            onBackToPreFlight = {
+                                navController.navigate("preflight") {
                                     popUpTo("inflight") { inclusive = true }
                                 }
                             },
