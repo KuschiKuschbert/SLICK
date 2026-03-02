@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SLICK</string>
+    <string name="notification_channel_name">SLICK Convoy Link</string>
+    <string name="notification_channel_description">Active convoy tracking and safety monitoring</string>
+    <string name="notification_title">SLICK</string>
+    <string name="notification_text_tactical">Convoy Link Active</string>
+    <string name="notification_text_survival">Survival Mode — BLE heartbeat only</string>
+</resources>

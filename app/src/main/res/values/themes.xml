@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Base application theme. The Tactical OLED theme is applied in Jetpack Compose
+        via SlickTheme. This XML theme is only the minimal Android window chrome theme
+        required to prevent a white flash on launch and match the OLED black palette.
+    -->
+    <style name="Theme.Slick" parent="android:Theme.Material.NoActionBar">
+        <!-- True OLED black window background to prevent white flash on launch -->
+        <item name="android:windowBackground">@color/slick_black</item>
+        <item name="android:statusBarColor">@color/slick_black</item>
+        <item name="android:navigationBarColor">@color/slick_black</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

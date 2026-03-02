@@ -1,0 +1,124 @@
+---
+description: SLICK security standards -- AES-256-GCM, SQLCipher, Android Keystore, no PII, rotating IDs, BuildConfig secrets
+alwaysApply: true
+---
+
+# Security Protocols
+
+## Secrets -- Never in Source Code
+
+```kotlin
+// ❌ BANNED -- hardcoded secrets
+val supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+// ✅ REQUIRED -- via BuildConfig from local.properties (gitignored)
+val supabaseKey = BuildConfig.SUPABASE_ANON_KEY
+```
+
+All secrets live in `local.properties` (gitignored). Injected via `secrets-gradle-plugin` into `BuildConfig`.
+`SUPABASE_SERVICE_ROLE_KEY` must never appear in the Android app -- server/CI only.
+
+## P2P Payload Encryption -- AES-256-GCM
+
+All Protobuf packets must be encrypted before P2P transmission:
+
+```kotlin
+// Every payload leaving the device goes through SecurePayloadManager
+val encrypted = securePayloadManager.encrypt(telemetry.toByteArray())
+    .getOrElse { return Result.failure(it) }
+nearbyClient.sendPayload(endpointId, Payload.fromBytes(encrypted))
+```
+
+- IV (12 bytes) prepended to ciphertext for each packet
+- Key retrieved from Android Keystore, never from memory or shared prefs
+- AES/GCM/NoPadding with 128-bit authentication tag
+
+## Local Database -- SQLCipher
+
+```kotlin
+// ❌ BAD -- plaintext Room database
+Room.databaseBuilder(context, SlickDatabase::class.java, "slick.db").build()
+
+// ✅ REQUIRED -- SQLCipher encrypted
+val passphrase = retrieveKeyFromKeystore()  // Android Keystore backed
+val factory = SupportFactory(passphrase)
+Room.databaseBuilder(context, SlickDatabase::class.java, "slick.db")
+    .openHelperFactory(factory)
+    .build()
+```
+
+## Android Keystore -- Key Management
+
+```kotlin
+// Key generation (one-time, on first launch)
+val keyGen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+keyGen.init(
+    KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+        .setKeySize(256)
+        .build()
+)
+keyGen.generateKey()
+```
+
+Key alias defined in `BuildConfig.SQLCIPHER_PASSPHRASE_ALIAS`.
+
+## P2P Identity -- Rotating Ephemeral UUIDs
+
+```kotlin
+// ❌ BAD -- exposes real device identity
+val advertisingName = Build.MODEL  // "Pixel 8"
+
+// ✅ GOOD -- ephemeral, rotated per convoy session
+val advertisingName = UUID.randomUUID().toString().take(8)  // e.g., "a3f9c201"
+```
+
+Real `riderId` (UUID) is only stored in the encrypted local Room database and the Supabase convoy session (with RLS).
+
+## No PII in Logs
+
+```kotlin
+// ❌ BANNED
+Timber.d("Rider at %.6f, %.6f".format(lat, lon))
+Timber.d("User email: $email")
+
+// ✅ ALLOWED -- UUIDs and operational data only
+Timber.d("Node synced: %s", nodeId)
+Timber.d("Breadcrumb cached, count=%d", pendingCount)
+```
+
+## Supabase Row Level Security
+
+All tables require RLS. Convoy data must only be readable by verified convoy members:
+
+```sql
+-- Riders can only read their own breadcrumbs or convoy sessions they belong to
+CREATE POLICY "convoy_member_access" ON rider_breadcrumbs
+    FOR SELECT USING (
+        auth.uid() = rider_id
+        OR EXISTS (
+            SELECT 1 FROM convoy_sessions
+            WHERE convoy_sessions.id = rider_breadcrumbs.convoy_id
+            AND auth.uid() = ANY(convoy_sessions.member_ids)
+            AND convoy_sessions.ended_at > NOW() - INTERVAL '24 hours'
+        )
+    );
+```
+
+## Data Retention -- Purge on Finish
+
+```kotlin
+// After successful Supabase sync, purge local breadcrumbs
+suspend fun flushAndPurge(): Result<Unit> {
+    val flushed = supabaseClient.uploadBreadcrumbs(localBreadcrumbs).getOrElse { return Result.failure(it) }
+    breadcrumbDao.clearAll()
+    return Result.success(Unit)
+}
+```
+
+Breadcrumbs not needed after sync. Route history deleted when ride is explicitly ended.
+
+## CI Secret Scanner
+
+GitHub Actions workflow must include a secret scanning step that blocks pushes containing API keys or JWT tokens. See `.github/workflows/android-build.yml`.

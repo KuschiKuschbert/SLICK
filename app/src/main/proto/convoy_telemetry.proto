@@ -1,0 +1,112 @@
+syntax = "proto3";
+
+package com.slick.tactical;
+
+option java_package = "com.slick.tactical.data.proto";
+option java_multiple_files = true;
+
+// ─── Convoy Telemetry ────────────────────────────────────────────────────────
+
+/**
+ * Rider position broadcast over P2P mesh or BLE heartbeat.
+ * Encrypted by SecurePayloadManager (AES-256-GCM) before transmission.
+ *
+ * Typical size: 80-120 bytes serialized -- well within BLE payload limits.
+ */
+message ConvoyTelemetry {
+  string rider_id = 1;           // Ephemeral UUID for this convoy session
+  double latitude = 2;           // Decimal degrees
+  double longitude = 3;          // Decimal degrees
+  double speed_kmh = 4;          // Speed in km/h (metric mandatory)
+  double bearing_degrees = 5;    // Heading in degrees (0-360)
+  string timestamp_24h = 6;      // HH:mm:ss (24h format mandatory)
+  ConvoyRole role = 7;           // Lead/Pack/Sweep
+  bool is_online = 8;            // False when sending "Going Dark" payload
+  string convoy_id = 9;          // Active convoy session ID
+}
+
+enum ConvoyRole {
+  PACK = 0;    // Throttled to 0.2Hz when convoy > 4
+  LEADER = 1;  // Always 1Hz
+  SWEEP = 2;   // Always 1Hz (last rider)
+}
+
+// ─── Route Update ────────────────────────────────────────────────────────────
+
+/**
+ * Broadcast by Lead rider when destination or waypoints change.
+ * Delta sync: only sent when the route actually changes.
+ */
+message RouteUpdate {
+  string convoy_id = 1;
+  string updated_by_rider_id = 2;
+  double destination_lat = 3;
+  double destination_lon = 4;
+  repeated Waypoint waypoints = 5;
+  string updated_at_24h = 6;    // HH:mm when the update was created
+  int32 schema_version = 7;     // Increment when RouteUpdate structure changes
+}
+
+message Waypoint {
+  double latitude = 1;
+  double longitude = 2;
+  string name = 3;              // Display name for the waypoint
+  string waypoint_type = 4;     // "fuel", "rest", "photo", "scenic" etc.
+}
+
+// ─── Democratic Detour Voting ─────────────────────────────────────────────
+
+/**
+ * Detour proposal broadcast to all convoy members for voting.
+ * Includes weather warning data if the detour creates a hazard.
+ */
+message DetourProposal {
+  string proposal_id = 1;       // UUID for this proposal
+  string proposer_rider_id = 2;
+  string stop_name = 3;
+  double latitude = 4;
+  double longitude = 5;
+  string proposed_at_24h = 6;   // HH:mm when proposed
+  string vote_expiry_24h = 7;   // HH:mm when voting closes (proposed + 2 min)
+  string weather_warning = 8;   // Empty string if no weather concern at detour point
+  int32 eta_impact_minutes = 9; // Positive = adds time, negative = saves time
+}
+
+message DetourVote {
+  string proposal_id = 1;
+  string voter_rider_id = 2;
+  bool approved = 3;
+  string voted_at_24h = 4;      // HH:mm
+}
+
+// ─── SOS Alert ───────────────────────────────────────────────────────────────
+
+/**
+ * SOS payload broadcast when CrashDetectionManager triggers and countdown expires.
+ * Sent via Supabase if online, or P2P/BLE if offline.
+ */
+message SOSPayload {
+  string rider_id = 1;
+  double latitude = 2;
+  double longitude = 3;
+  double speed_kmh_before_impact = 4;  // Speed at the moment of impact detection
+  string triggered_at_24h = 5;         // HH:mm:ss
+  string convoy_id = 6;                // Empty if solo riding
+  bool was_cancelled = 7;              // True if rider cancelled the countdown
+}
+
+// ─── BLE Heartbeat ───────────────────────────────────────────────────────────
+
+/**
+ * Minimal survival-mode heartbeat over BLE.
+ * Target: <= 100 bytes serialized.
+ * Sent every 10 seconds in SURVIVAL_MODE.
+ */
+message BleHeartbeat {
+  string rider_id = 1;
+  float latitude = 2;   // float (4 bytes) vs double (8 bytes) for size constraint
+  float longitude = 3;
+  float speed_kmh = 4;
+  string timestamp_24h = 5;  // HH:mm (no seconds to save space)
+  ConvoyRole role = 6;
+}

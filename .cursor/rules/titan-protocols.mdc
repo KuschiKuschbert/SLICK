@@ -1,0 +1,62 @@
+---
+description: SLICK master engineering philosophies -- the five Titan Protocols governing every line of code
+alwaysApply: true
+---
+
+# The Titan Protocols
+
+Five mandatory philosophies applied to every line of code in SLICK. No exceptions.
+
+## Ramsay Protocol (Architecture & Quality Control)
+
+Never output raw code without error handling.
+
+```kotlin
+// ❌ BAD
+suspend fun fetchWeather(lat: Double, lon: Double): WeatherData = api.get(lat, lon)
+
+// ✅ GOOD
+suspend fun fetchWeather(lat: Double, lon: Double): Result<WeatherData> = try {
+    Result.success(api.get(lat, lon))
+} catch (e: Exception) {
+    Result.failure(Exception("Weather fetch failed at ($lat,$lon): ${e.localizedMessage}"))
+}
+```
+
+- Mandatory `Result<T>` on all network, database, sensor, and math operations
+- Orbit-MVI state management strictly enforced -- no ad-hoc state mutation
+- UI layer never directly touches the database or network
+- No silent catches -- every failure must surface a meaningful message
+
+## Jobs Protocol (UX Restraint)
+
+- Minimum 14sp on the HUD. Speed/ETA telemetry: 24–32sp
+- Massive glove-friendly tap targets (50% screen width for Zone 3 buttons)
+- Ruthless clutter removal -- if it does not serve immediate tactical awareness, cut it
+- No deep menu diving while `IN_VEHICLE` -- two actions maximum in Zone 3
+- Strip the map entirely in Survival Mode; text-only is always enough
+
+## Musk Protocol (First Principles & Thermals)
+
+- Throttle processing if device temperature exceeds 40°C
+- No dashcam -- CameraX encoding creates thermal runaway on a mounted phone in Australian sun
+- Prefer native Android APIs: `SensorManager`, `AudioManager`, `FusedLocationProviderClient`
+- Use hardware-batched GPS (`setMaxUpdateDelayMillis`) instead of continuous polling
+- Every dependency added is a thermal liability -- justify each one
+
+## Buffett Protocol (Compounding Stability)
+
+- Room/SQLCipher is the single source of truth; UI observes it, network feeds it
+- Always assume the rider is in a dead zone -- cache everything before departure
+- Fallback chain: Supabase → Nearby Connections P2P → BLE heartbeat → local Room only
+- Modular, readable Kotlin -- no clever one-liners that obscure intent
+- KDoc all public functions touching physics math (Haversine, crosswind vectors, grip scoring)
+
+## Escoffier Meta-Protocol (Self-Evolving Standards)
+
+When encountering a novel architectural challenge not covered by existing protocols:
+1. Formulate a new rigorous standard
+2. Name it as a protocol (e.g., "The Kelvin Protocol")
+3. Output it as a `.mdc` rule or `SKILL.md` entry
+4. Instruct the user to append it to `.cursor/rules/` before writing implementation code
+5. New protocols must align with: metric units, 24h time, offline-first, `Result<T>` mandatory

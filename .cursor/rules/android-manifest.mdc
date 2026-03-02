@@ -1,0 +1,99 @@
+---
+description: AndroidManifest.xml standards -- permissions checklist, foreground service types, staggered rationale
+globs: **/AndroidManifest.xml
+alwaysApply: false
+---
+
+# Android Manifest Standards
+
+## Required Permissions Checklist
+
+Every permission must be present. Verify before any release:
+
+```xml
+<!-- Network -->
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+<!-- Location (staggered: FINE + COARSE at onboarding, BACKGROUND only when convoy created) -->
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+<!-- Foreground service types (Android 14+ requires explicit types) -->
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+<!-- Bluetooth for P2P mesh and SCO audio -->
+<uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+<uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+
+<!-- IMU crash detection + Activity Recognition -->
+<uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+
+<!-- SCO audio routing to Cardo/Sena helmet -->
+<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+<uses-permission android:name="android.permission.BLUETOOTH" />
+
+<!-- Signal recovery beacon -->
+<uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
+<!-- SOS notifications -->
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+<!-- Battery optimization bypass prompt -->
+<uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+```
+
+## Foreground Service Declaration
+
+```xml
+<service
+    android:name=".service.ConvoyForegroundService"
+    android:foregroundServiceType="location"
+    android:exported="false" />
+
+<service
+    android:name=".service.GarageSyncWorker"
+    android:exported="false" />
+```
+
+`foregroundServiceType="location"` is mandatory for Android 14+ background location access.
+
+## Staggered Permission Rationale
+
+Do NOT request all permissions at launch. Request just-in-time:
+
+| Permission | When to Request |
+|-----------|-----------------|
+| `ACCESS_FINE_LOCATION` | On first map open |
+| `ACCESS_BACKGROUND_LOCATION` | When convoy session is created |
+| `BLUETOOTH_*` / `NEARBY_WIFI_DEVICES` | When "Join Convoy" is tapped |
+| `ACTIVITY_RECOGNITION` | On first launch (needed for crash detection) |
+| `MODIFY_AUDIO_SETTINGS` | When helmet integration is configured |
+| `READ_PHONE_STATE` | When dead-zone signal recovery is explained |
+| `POST_NOTIFICATIONS` | Before starting any background service |
+
+Each request must show a rationale screen explaining the safety purpose (required for Play Store background location approval).
+
+## Google Play Background Location Declaration
+
+Background location requires a video demonstrating:
+1. The rider mounting their phone
+2. The app running in the background
+3. The convoy link remaining active while screen is off
+4. The SOS detection working without foreground
+
+Keep this video at `docs/play-store/background-location-justification.mp4`.
+
+## Minimum SDK
+
+```xml
+<uses-sdk
+    android:minSdkVersion="26"
+    android:targetSdkVersion="35" />
+```
+
+Min SDK 26 (Android 8.0) required for: Nearby Connections API stability, BLE advertising, foreground service types.

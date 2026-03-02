@@ -1,0 +1,134 @@
+---
+description: SLICK testing standards -- JUnit 5, MockK, Turbine, Coroutines Test, Result assertions, 70/20/10 pyramid
+globs: **/test/**/*.kt, **/androidTest/**/*.kt
+alwaysApply: false
+---
+
+# Testing Standards
+
+## Testing Pyramid
+
+- **Unit (70%)**: Pure functions, ViewModels, engine managers, math -- fast, no Android framework
+- **Integration (20%)**: Repository + Room DB, Supabase responses, Hilt injection
+- **UI/E2E (10%)**: Critical flows with Compose UI Test and Espresso
+
+Coverage targets:
+- Minimum: 60% overall
+- Target: 80% overall
+- Critical paths (Haversine math, GripMatrix, crash detection, AES-256-GCM): **100%**
+
+## JUnit 5 Setup
+
+```kotlin
+// Use @Test from JUnit 5, not JUnit 4
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
+
+class RouteForecasterTest {
+    private lateinit var forecaster: RouteForecaster
+
+    @BeforeEach fun setup() { forecaster = RouteForecaster() }
+
+    @Test fun `generateNodes returns correct 10km intervals and 24h ETA`() {
+        val route = listOf(
+            Coordinate(-26.7380, 153.1230),
+            Coordinate(-26.5580, 153.1230),
+        )
+        val result = forecaster.generateNodes(route, speedKmh = 100.0, startTime = LocalTime.of(14, 0))
+
+        assertTrue(result.isSuccess)
+        val nodes = result.getOrThrow()
+        assertEquals("14:00", nodes.first().estimatedArrival24h)
+        assertEquals("14:06", nodes[1].estimatedArrival24h)  // 10km @ 100km/h = 6 min
+    }
+
+    @Test fun `generateNodes fails with empty route`() {
+        val result = forecaster.generateNodes(emptyList(), 100.0, LocalTime.MIDNIGHT)
+        assertTrue(result.isFailure)
+        assertEquals("Route is empty.", result.exceptionOrNull()?.message)
+    }
+}
+```
+
+## MockK for Android Dependencies
+
+```kotlin
+// Mock Android APIs cleanly
+val mockSensorManager = mockk<SensorManager>(relaxed = true)
+val mockFusedLocation = mockk<FusedLocationProviderClient>()
+
+// Verify interactions
+verify { mockSensorManager.registerListener(any(), any(), any()) }
+confirmVerified(mockSensorManager)
+```
+
+## Turbine for Flow Testing
+
+```kotlin
+@Test fun `systemState emits SURVIVAL_MODE when power save enabled`() = runTest {
+    val manager = BatterySurvivalManager(context)
+    manager.systemState.test {
+        awaitItem() // initial FULL_TACTICAL
+        triggerPowerSaveMode(enabled = true)
+        assertEquals(OperationalState.SURVIVAL_MODE, awaitItem())
+        cancelAndIgnoreRemainingEvents()
+    }
+}
+```
+
+## Coroutines Test Dispatchers
+
+```kotlin
+@ExtendWith(CoroutinesTestExtension::class)
+class ConvoyMeshManagerTest {
+    @Test fun `joinConvoy succeeds and emits rider state`() = runTest {
+        val manager = ConvoyMeshManager(testScope = this)
+        val result = manager.joinConvoy("convoy-abc")
+        assertTrue(result.isSuccess)
+    }
+}
+```
+
+## Result<T> Assertion Pattern
+
+```kotlin
+// Always assert on both success and failure paths
+fun assertSuccess(result: Result<*>) = assertTrue(result.isSuccess, "Expected success but got: ${result.exceptionOrNull()}")
+fun assertFailure(result: Result<*>, expectedMessage: String? = null) {
+    assertTrue(result.isFailure)
+    expectedMessage?.let { assertEquals(it, result.exceptionOrNull()?.message) }
+}
+```
+
+## Metric & 24h Validation in Tests
+
+```kotlin
+// Assert metric units explicitly -- never let imperial slip through
+@Test fun `grip report uses metric rainfall`() {
+    val report = gripMatrix.evaluate(rainfallMm = 5.0, tempCelsius = 18.5)
+    // Assert the result contains metric values, not feet/Fahrenheit
+    assertEquals("Moderate rain - Reduced Grip", report.getOrThrow().dangerStatus)
+}
+
+// Assert 24h time format
+@Test fun `node ETA uses 24h format`() {
+    val node = nodes.first()
+    assertTrue(node.estimatedArrival24h.matches(Regex("\\d{2}:\\d{2}")))
+    assertFalse(node.estimatedArrival24h.contains("AM") || node.estimatedArrival24h.contains("PM"))
+}
+```
+
+## Compose UI Tests
+
+```kotlin
+@get:Rule val composeTestRule = createComposeRule()
+
+@Test fun `Zone3 buttons are large enough for gloves`() {
+    composeTestRule.setContent { Zone3InteractionDeck(onMarkHazard = {}, onMute = {}) }
+    composeTestRule.onNodeWithText("MARK HAZARD")
+        .assertHeightIsAtLeast(60.dp)
+        .assertWidthIsAtLeast(160.dp)
+        .performClick()
+}
+```

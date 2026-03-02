@@ -1,0 +1,111 @@
+---
+description: SLICK cleanup standards -- no magic numbers, no hardcoded URLs, Timber only, detekt, KDoc, file size limits
+alwaysApply: true
+---
+
+# Cleanup Standards
+
+Automated enforcement: `./gradlew detekt ktlintCheck` must pass before any commit.
+
+## No Magic Numbers
+
+```kotlin
+// ❌ BAD
+if (batteryLevel < 15) switchToSurvivalMode()
+if (riders.size > 4) enableClustering()
+val interval = 5000L
+
+// ✅ GOOD -- named constants in RouteConstants or feature-specific companion object
+object SlickConstants {
+    const val SURVIVAL_MODE_BATTERY_THRESHOLD = 15
+    const val CONVOY_CLUSTERING_THRESHOLD = 4
+    const val BLE_HEARTBEAT_INTERVAL_MS = 10_000L
+    const val NODE_INTERVAL_KM = 10.0
+    const val MAX_DETOUR_RADIUS_KM = 15.0
+    const val THERMAL_THROTTLE_CELSIUS = 40.0
+    const val THERMAL_CRITICAL_CELSIUS = 45.0
+    const val SOS_COUNTDOWN_SECONDS = 60
+    const val GPS_BATCH_SURVIVAL_MS = 30_000L
+    const val PACK_BROADCAST_INTERVAL_MS = 5_000L   // 0.2 Hz
+    const val LEAD_BROADCAST_INTERVAL_MS = 1_000L    // 1 Hz
+}
+```
+
+## No Hardcoded URLs or IDs
+
+```kotlin
+// ❌ BAD
+val url = "https://api.open-meteo.com/v1/forecast"
+val serviceId = "com.slick.tactical.mesh.v1"
+
+// ✅ GOOD -- from BuildConfig (injected via secrets-gradle-plugin)
+val baseUrl = BuildConfig.OPEN_METEO_BASE_URL
+val serviceId = BuildConfig.P2P_SERVICE_ID
+```
+
+## Timber Only -- No Raw Logging
+
+```kotlin
+// ❌ BANNED everywhere
+Log.d("TAG", "message")
+Log.e("TAG", "error", exception)
+println("debug info")
+System.out.println("something")
+
+// ✅ REQUIRED
+Timber.d("Node loaded: %s", nodeId)
+Timber.e(exception, "Sync failed for convoy: %s", convoyId)
+```
+
+Timber is initialized in `SlickApplication.onCreate()` for debug builds only.
+
+## KDoc on All Public Functions
+
+```kotlin
+// ❌ BAD -- undocumented public API
+fun haversineDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double
+
+// ✅ GOOD
+/**
+ * Calculates great-circle distance between two GPS coordinates.
+ * Uses the Haversine formula with Earth radius = 6371.0 km.
+ *
+ * @return Distance in kilometres
+ */
+fun haversineDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double
+```
+
+## No Empty Files
+
+Files with 0 lines or only `package` declaration should be deleted.
+
+## No Duplicate Utilities
+
+Before creating a new utility function, search for existing:
+- `util/Haversine.kt` -- distance calculations
+- `util/MetricConverter.kt` -- unit conversions
+- `util/ResultExtensions.kt` -- Result<T> helpers
+- `util/TimeFormatter.kt` -- 24h time formatting
+
+## File Size Enforcement
+
+Check with detekt or manual review:
+
+| Type | Max Lines | Violation Action |
+|------|-----------|-----------------|
+| Service | 400 | Extract engine component |
+| Composable screen | 250 | Extract sub-composables |
+| ViewModel | 300 | Extract use case classes |
+| Repository | 300 | Split by data source |
+| Engine Manager | 400 | Extract strategy classes |
+| Utility | 150 | Split by concern |
+
+## Pre-Commit Checklist
+
+Run before every git commit:
+```bash
+./gradlew ktlintCheck          # Kotlin style
+./gradlew detekt               # Static analysis
+./gradlew test                 # Unit tests
+./gradlew assembleDebug        # Build check
+```

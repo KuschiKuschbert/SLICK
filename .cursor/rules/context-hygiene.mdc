@@ -1,0 +1,99 @@
+---
+description: AI context hygiene -- handoff checkpoints, session-end checklist, bug memory, decision logging, self-improvement
+alwaysApply: true
+---
+
+# Context Hygiene & Self-Improvement
+
+## Handoff Checkpoint Template
+
+When approaching context limit or pausing a long task, produce:
+
+```
+## CHECKPOINT: [Task Name]
+**Branch:** feature/task-name
+**Last Commit:** [hash + message]
+**Phase:** [Phase 0a / 1a / 2 / etc.]
+**Completed:** [list of files/components done]
+**In Progress:** [current file being worked on]
+**Remaining:** [what's left in this phase]
+**Known Issues:** [anything broken or blocked]
+**Next Step:** [exact first action on resume]
+**TECH_DEBT Items:** [any new items logged]
+```
+
+## Session-End Checklist
+
+Before ending any session where files were modified:
+
+```bash
+git status          # Nothing uncommitted
+git log --oneline -5  # Commits look correct
+./gradlew ktlintCheck  # No new lint errors
+./gradlew test         # No new test failures
+```
+
+If lint or tests fail on files you modified: fix before ending the session.
+
+## Bug Memory Protocol
+
+If a fix took 2+ attempts (tried something, it failed, tried again):
+
+Add to `docs/TROUBLESHOOTING_LOG.md`:
+```
+| Symptom | Root Cause | Fix | Derived Rule |
+|---------|-----------|-----|--------------|
+| SQLCipher DB fails to open on cold start | Key retrieved before Keystore unlocked | Defer key retrieval to first access, not init | Always lazy-load Keystore keys |
+```
+
+Also append to the relevant `engine/*/SKILL.md` under `## GOTCHAS`:
+```
+[YYYY-MM-DD] BUG: SQLCipher key timing
+ROOT CAUSE: Android Keystore not accessible before first unlock
+FIX: Wrap key retrieval in lazy delegate, catch KeyPermanentlyInvalidatedException
+PREVENTION: Never retrieve Keystore keys in Application.onCreate()
+```
+
+## Decision Log
+
+When making an architectural choice, append to `docs/brain/MEMORY.md`:
+```
+[YYYY-MM-DD] **Decision**: Chose Ktor over Retrofit for Open-Meteo client
+Because Supabase Kotlin SDK uses Ktor internally, sharing the engine reduces APK size and avoids two HTTP stacks.
+```
+
+## Self-Improvement Triggers
+
+When you say "I noticed that..." or "turns out..." -- that's a skill update needed.
+
+1. Open the relevant `engine/*/SKILL.md` or `.cursor/skills/*/SKILL.md`
+2. Add the new pattern under `## GOTCHAS` or `## HOW IT WORKS`
+3. If it's cross-cutting, add to `docs/brain/MEMORY.md`
+
+## Never Repeat Protocol
+
+Before starting any task:
+1. Check `docs/TROUBLESHOOTING_LOG.md` -- has this error been seen?
+2. Check the domain `SKILL.md` GOTCHAS section
+3. Apply the documented fix immediately if found -- don't rediscover it
+
+## New Skill Trigger
+
+If you perform the same type of task 3+ times without a skill file:
+- Create a `SKILL.md` in the most relevant directory
+- Add it to `.cursor/SKILLS_INDEX.md`
+
+## Sub-Agent Handoff
+
+When spawning a sub-agent:
+- Pass the checkpoint block in the prompt
+- Specify exactly which files to touch
+- Never split tasks that share a single mutable file
+- Ask the sub-agent to produce a checkpoint on completion
+
+## Context Window Warning Signs
+
+Produce a checkpoint if:
+- You can't recall what was done 10+ steps ago
+- The response is getting very long without a commit
+- You're unsure if a file was already written

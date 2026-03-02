@@ -1,0 +1,96 @@
+---
+description: SLICK brand voice -- tactical/technical tone, prohibited words, required terminology, legal language
+alwaysApply: true
+---
+
+# Brand Voice
+
+## Core Identity
+
+SLICK is a data-driven co-pilot for high-speed regional travel. It is a piece of tactical equipment, not a social platform.
+
+**Tone**: Authoritative, calm, utilitarian. Like a flight computer, not a travel blogger.
+
+## Prohibited Words and Phrases
+
+Never use these in UI copy, error messages, documentation, or comments:
+
+| Prohibited | Why |
+|-----------|-----|
+| "Freedom", "escape", "adventure" | Lifestyle cliches -- SLICK is equipment |
+| "Safe", "safely", "guaranteed" | Legal liability -- never promise safety |
+| "Clear" (as in "road is clear") | Implies certainty we don't have |
+| "Sunrise/sunset ride", "beautiful scenery" | Romantic cliches -- not our market |
+| "Brothers of the road", "biker family" | Social cliches |
+| "Smart" / "intelligent" | Vague marketing noise |
+
+## Required Terminology
+
+Always use these precise technical terms:
+
+| Use This | Not This |
+|----------|----------|
+| Node | Location, point, spot |
+| Vector | Direction, angle, force |
+| Telemetry | Data, stats, numbers |
+| Crosswind | Side wind, gusts |
+| Convoy | Group, crew, friends |
+| Residual Risk Index | Slippery road warning |
+| Observed | Detected, measured |
+| Projected | Estimated, expected |
+| Probability | Chance, likelihood |
+
+## Legal Language Constraints
+
+SLICK is a "Situational Awareness Aid" -- it provides data, not safety guarantees.
+
+```kotlin
+// ❌ BAD -- promises safety
+"Road conditions: SAFE"
+"Clear path ahead"
+"No hazards detected"
+
+// ✅ GOOD -- reports observations
+"Residual Risk Index: Elevated (2.4mm rain 18 min ago)"
+"Crosswind: 38 km/h lateral at Node 7"
+"Probability of wet surface: High"
+```
+
+Every hazard warning must be labeled as "Observed" or "Projected", never presented as ground truth.
+
+## Error Message Voice
+
+```kotlin
+// ❌ BAD -- vague, unhelpful
+"Something went wrong"
+"Error occurred"
+
+// ✅ GOOD -- specific, tactical, actionable
+"Weather sync failed at Node 4 (14:30). Cached data from 08:45 in use."
+"P2P link lost to Rider 2. Ghost projection active. Last known: 14.2 km behind."
+"GPS signal dropped. Dead reckoning active. Accuracy degrades beyond 60 seconds."
+```
+
+## UI Copy Examples
+
+```
+// Zone 1 header labels
+"110 km/h"  not  "Speed: 110"
+"ETA 16:45" not  "Arrives at: 4:45 PM"
+"← 450 m"   not  "Turn left in 450 metres"
+
+// Detour overlay
+"DETOUR PROPOSED: Servo Stop
+ ETA impact: +12 min
+ Weather: Crosswind elevated at Node 11
+ [YES]   [NO]"
+
+// SOS countdown
+"IMPACT DETECTED
+ SOS in 58s
+ [CANCEL]"
+```
+
+## In-App Documentation Voice
+
+Technical language is appropriate and expected. No hand-holding for basic concepts. Riders who download SLICK understand GPS, weather, and group riding.

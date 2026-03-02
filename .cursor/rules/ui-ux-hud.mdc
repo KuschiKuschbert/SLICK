@@ -1,0 +1,142 @@
+---
+description: SLICK UI/UX rules -- Tactical OLED palette, HUD zones, Monospace telemetry, Direct Sun mode, glove-friendly interaction
+globs: **/ui/**/*.kt
+alwaysApply: false
+---
+
+# UI/UX HUD Standards
+
+## The Two States
+
+- **Pre-Flight** (stationary): Standard Material Design. Deep menus, configuration, convoy setup allowed.
+- **In-Flight** (`IN_VEHICLE` detected): Tactical HUD only. No menus. Two buttons max.
+
+Auto-transition triggered by `ActivityRecognitionClient` detecting `IN_VEHICLE`.
+
+## Tactical OLED Color Palette -- NO Material You In-Flight
+
+```kotlin
+// Hardcoded tactical tokens -- NEVER use dynamic Material You colors in-flight
+object SlickColors {
+    val Void = Color(0xFF000000)       // True OLED black -- pixels physically off
+    val Alert = Color(0xFFFF5722)      // Deep orange -- hazards, SOS, tap targets
+    val Wash = Color(0xFF00E5FF)       // Cyan -- rain gradient, wind vectors
+    val DataPrimary = Color(0xFFFFFFFF) // Pure white -- speed, ETA, distance
+    val DataSecondary = Color(0xFF9E9E9E) // Grey -- labels, secondary info
+    val Surface = Color(0xFF121212)    // Near-black surface for cards
+}
+```
+
+Override Material 3 color scheme completely for in-flight screens. Never allow `DynamicColorScheme`.
+
+## Cognitive Zoning (In-Flight Layout)
+
+```
+┌─────────────────────────────────┐
+│  ZONE 1 (top 20%)               │
+│  ← 450 m    110 km/h   14:30   │  ← Peripheral Header
+├─────────────────────────────────┤
+│                                 │
+│  ZONE 2 (middle 50%)            │
+│  [MapLibre + GripMatrix polyline]│  ← Tactical Focus
+│  Anchored below center          │
+│  (shows more route ahead)       │
+├─────────────────────────────────┤
+│  ZONE 3 (bottom 30%)            │
+│  [MARK HAZARD]  [AUDIO MUTE]   │  ← Interaction Deck
+└─────────────────────────────────┘
+```
+
+Zone 2 map anchor: rider icon at ~55% from top (not center) to maximize forward visibility.
+
+## Typography -- Monospace for All Telemetry Numbers
+
+```kotlin
+// ❌ BAD -- SansSerif '1' is narrower than '8', causes jitter at speed
+Text("110 km/h", style = MaterialTheme.typography.displayLarge)
+
+// ✅ GOOD -- Monospace prevents horizontal layout shift during speed changes
+Text(
+    text = "${speedKmh.toInt()} km/h",
+    style = TextStyle(
+        fontFamily = FontFamily.Monospace,
+        fontSize = 32.sp,
+        fontWeight = FontWeight.Bold,
+        color = SlickColors.DataPrimary,
+    )
+)
+```
+
+**Size rules:**
+- Zone 1 telemetry (speed, ETA, distance): 24–32sp Monospace
+- Zone 3 button labels: 18–20sp Bold SansSerif
+- All HUD text minimum: 14sp -- no exceptions
+
+## Glove-Friendly Interaction
+
+```kotlin
+// Zone 3 buttons must fill 50% width each, minimum 60dp height
+Row(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+    SlickButton(
+        text = "MARK HAZARD",
+        modifier = Modifier.weight(1f).height(64.dp),
+        color = SlickColors.Alert,
+        onClick = onMarkHazard,
+    )
+    Spacer(modifier = Modifier.width(8.dp))
+    SlickButton(
+        text = "AUDIO MUTE",
+        modifier = Modifier.weight(1f).height(64.dp),
+        color = SlickColors.Surface,
+        onClick = onToggleMute,
+    )
+}
+```
+
+Long-press for secondary actions. Never require precise taps on small targets while in-flight.
+
+## Direct Sun Mode (Lux Sensor Auto-Inversion)
+
+When `Sensor.TYPE_LIGHT` returns max lux (hardware saturation), hard-invert theme:
+
+```kotlin
+val directSunColors = lightColorScheme(
+    background = Color.White,
+    onBackground = Color.Black,
+    primary = Color(0xFFD84315), // Dark orange on white
+    surface = Color(0xFFF5F5F5),
+    onSurface = Color.Black,
+)
+```
+
+This overrides the OLED dark theme. The rider's eyes need contrast, not battery savings.
+
+## Democratic Detour Overlay (In-Flight Modal)
+
+```kotlin
+// Modal slides up from bottom, blurs map slightly, massive YES/NO targets
+Box(modifier = Modifier.fillMaxSize()) {
+    // Map beneath (slightly dimmed)
+    // Overlay: 50% height bottom sheet
+    // Two massive buttons: YES (green) / NO (dark grey)
+    // Auto-dismisses after voteExpiry countdown
+    // Weather warning text if detour creates hazard
+}
+```
+
+## Survival Mode UI (Battery < 15%)
+
+Map is killed. Composable replaces Zones 1+2+3 with full-screen text-only:
+
+```kotlin
+// Survival HUD -- entire screen, no map
+Column(
+    modifier = Modifier.fillMaxSize().background(Color.Black),
+    horizontalAlignment = Alignment.CenterHorizontally,
+) {
+    TurnArrow(direction = nextTurn, modifier = Modifier.size(120.dp))  // Massive arrow
+    Text("${distanceToTurn} m", fontSize = 48.sp, fontFamily = FontFamily.Monospace)
+    Text("${speedKmh.toInt()} km/h", fontSize = 40.sp, fontFamily = FontFamily.Monospace)
+    BatteryGauge(level = batteryPercent)  // Critical visual
+}
+```

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tactical OLED palette — matches SlickTheme.kt exactly -->
+    <color name="slick_black">#000000</color>
+    <color name="slick_surface">#121212</color>
+    <color name="slick_orange">#FF5722</color>
+    <color name="slick_cyan">#00E5FF</color>
+    <color name="slick_white">#FFFFFF</color>
+    <color name="slick_grey">#9E9E9E</color>
+</resources>

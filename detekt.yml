@@ -1,0 +1,57 @@
+build:
+  maxIssues: 0
+
+config:
+  validation: true
+
+naming:
+  FunctionNaming:
+    active: true
+    functionPattern: '[a-z][a-zA-Z0-9]*'
+    excludes: ['**/test/**', '**/androidTest/**']
+
+complexity:
+  LongParameterList:
+    active: true
+    functionThreshold: 8
+    constructorThreshold: 8
+  ComplexMethod:
+    active: true
+    threshold: 15
+  LongMethod:
+    active: true
+    threshold: 60
+
+style:
+  MagicNumber:
+    active: true
+    ignoreNumbers: ['-1', '0', '1', '2']
+    ignoreHashCodeFunction: true
+    ignorePropertyDeclaration: false
+    ignoreConstantDeclaration: true
+    ignoreCompanionObjectPropertyDeclaration: true
+    ignoreAnnotation: false
+    ignoreNamedArgument: true
+    ignoreEnums: false
+
+  WildcardImport:
+    active: true
+    excludeImports: ['java.util.*', 'kotlinx.coroutines.*']
+
+  NoConsoleOutput:
+    active: true  # No println/print in production code -- use Timber
+
+performance:
+  SpreadOperator:
+    active: false  # Not a concern for SLICK's data volumes
+
+potential-bugs:
+  AvoidReferenceToMutableStateFlowInComposable:
+    active: true
+
+# Exclusions for generated code and tests
+exclude:
+  - '**/build/**'
+  - '**/test/**'
+  - '**/androidTest/**'
+  - '**/*.proto'

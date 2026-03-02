@@ -1,0 +1,115 @@
+---
+description: SLICK architecture -- Expendable Layer vs Engine Room, Hilt DI, package structure, file size limits
+alwaysApply: true
+---
+
+# Architecture
+
+## The Hard Boundary: Expendable Layer vs Engine Room
+
+```
+┌─────────────────────────────────────────────────┐
+│  EXPENDABLE LAYER (can be killed by Android OS) │
+│  Jetpack Compose UI, MapLibre Renderer,         │
+│  HUD Zones 1-3, Detour Voting Overlays          │
+│  → Only OBSERVES state via StateFlow/Flow       │
+│  → Never writes to DB or calls network directly │
+└──────────────────┬──────────────────────────────┘
+                   │ observes StateFlow
+┌──────────────────▼──────────────────────────────┐
+│  ENGINE ROOM (ConvoyForegroundService)          │
+│  Must survive: screen off, battery saver,       │
+│  OEM task killers, Android Doze                 │
+│                                                  │
+│  • BatchedLocationManager (GPS)                 │
+│  • CrashDetectionManager (IMU + SOS)            │
+│  • ConvoyMeshManager (P2P + BLE)                │
+│  • AudioRouteManager (SCO/TTS)                  │
+│  • RouteForecaster + GripMatrix (weather)       │
+│  • SignalRecoveryReceiver (dead-zone beacon)    │
+│  • BatterySurvivalManager (OperationalState)    │
+│  • Room + SQLCipher (encrypted local DB)        │
+└─────────────────────────────────────────────────┘
+```
+
+## Hilt DI Modules
+
+- `AppModule` -- Singleton-scoped: `SlickDatabase`, `SupabaseClient`, `OpenMeteoService`, `SecurePayloadManager`
+- `ServiceModule` -- Service-scoped: `BatchedLocationManager`, `ConvoyMeshManager`, `AudioRouteManager`
+- `DataModule` -- DAOs, repositories, `RouteRepository`
+
+Never inject Service-scoped components into Application-scoped singletons.
+
+## Package Structure
+
+```
+com.slick.tactical/
+  app/                        SlickApplication.kt (Hilt entry)
+  di/                         AppModule, ServiceModule, DataModule
+  service/
+    ConvoyForegroundService   Lifecycle owner for Engine Room
+    BatterySurvivalManager    PowerManager + OperationalState flow
+    GarageSyncWorker          WorkManager: PMTiles delta updates
+  engine/
+    location/                 BatchedLocationManager
+    imu/                      CrashDetectionManager
+    mesh/                     ConvoyMeshManager, ConvoyLeaderManager,
+                              ConvoyOptimizationManager
+    audio/                    AudioRouteManager
+    weather/                  RouteForecaster, GripMatrix,
+                              TwilightMatrix, SolarGlareVector
+    signal/                   SignalRecoveryReceiver
+    haven/                    EmergencyHavenLocator
+    crypto/                   SecurePayloadManager
+    health/                   DeviceHealthManager
+  data/
+    local/                    SlickDatabase, DAOs, entities
+    remote/                   SupabaseClient, OpenMeteoClient,
+                              OverpassClient, ValhallClient
+    proto/                    .proto schemas
+    model/                    Domain models (Route, WeatherNode, etc.)
+    repository/               RouteRepository (offline-first)
+  ui/
+    theme/                    SlickTheme
+    onboarding/               Staggered permission screens
+    preflight/                Route config, convoy lobby, settings
+    inflight/                 Zone1Header, Zone2Map, Zone3Deck
+    survival/                 Text-only HUD
+    tour/                     Tour planner, expense tracker
+    components/               MassiveButton, TelemetryText
+  util/                       Haversine, Result extensions, MetricConverter
+```
+
+## Orbit-MVI -- Unidirectional Data Flow
+
+```kotlin
+// ViewModel is a Container
+class ConvoyViewModel @HiltViewModel constructor(
+    private val repository: RouteRepository,
+    private val meshManager: ConvoyMeshManager,
+) : ViewModel(), ContainerHost<ConvoyState, ConvoySideEffect> {
+
+    override val container = container<ConvoyState, ConvoySideEffect>(ConvoyState.Idle)
+
+    fun onJoinConvoy(convoyId: String) = intent {
+        reduce { state.copy(isConnecting = true) }
+        val result = meshManager.joinConvoy(convoyId)
+        result.onSuccess { reduce { state.copy(isConnecting = false, convoyId = convoyId) } }
+        result.onFailure { postSideEffect(ConvoySideEffect.ShowError(it.message ?: "Unknown error")) }
+    }
+}
+```
+
+UI collects state via `collectAsState()`. Never mutates ViewModel state directly.
+
+## File Size Limits
+
+| Type | Max Lines | Action if Over |
+|------|-----------|----------------|
+| Activity / Service | 400 | Extract Engine components |
+| Composable screen | 250 | Extract sub-composables |
+| ViewModel | 300 | Extract use cases |
+| Repository | 300 | Split by data source |
+| Engine Manager | 400 | Extract strategy classes |
+| Utility / Extension | 150 | Split by domain |
+| Test file | 300 | Split by feature |

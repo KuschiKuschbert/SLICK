@@ -1,0 +1,54 @@
+## SLICK .gitignore
+
+# Local properties -- NEVER commit (contains API keys)
+local.properties
+
+# Android build artifacts
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.codeGeneration
+
+# App build outputs
+app/build/
+
+# Gradle cache
+.gradle/
+gradle-wrapper.jar
+gradlew.bat
+
+# IDE
+.idea/
+*.iml
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# APK / AAB outputs
+*.apk
+*.ap_
+*.aab
+
+# Keystore files (NEVER commit)
+*.jks
+*.keystore
+release-key.*
+
+# Proguard mapping (consider keeping for crash symbolication)
+/app/mapping.txt
+
+# Test reports
+app/build/reports/
+
+# Protobuf generated code (regenerated at build time)
+# app/build/generated/source/proto/
+
+# PMTiles downloaded files (large binary)
+app/src/main/assets/*.pmtiles

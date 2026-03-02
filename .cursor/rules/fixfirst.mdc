@@ -1,0 +1,45 @@
+---
+description: Fix-first attitude -- never disable or stub code when hitting a roadblock, fix the root cause
+alwaysApply: true
+---
+
+# Fix First
+
+Always have a fix-first attitude.
+
+**Never disable, comment out, or stub functions when hitting a roadblock. Fix the issue.**
+
+## What This Means
+
+```kotlin
+// ❌ BANNED -- giving up and disabling
+fun detectCrash(acceleration: Float): Boolean {
+    // TODO: fix NullPointerException here
+    return false  // Disabled until fixed
+}
+
+// ❌ BANNED -- stubbing to move on
+suspend fun syncBreadcrumbs(): Result<Unit> {
+    return Result.success(Unit)  // Stubbed -- Supabase not working yet
+}
+
+// ✅ REQUIRED -- actually fix the root cause
+suspend fun syncBreadcrumbs(): Result<Unit> = try {
+    val client = supabase ?: return Result.failure(Exception("Supabase not initialized"))
+    client.from("rider_breadcrumbs").insert(pendingBreadcrumbs)
+    Result.success(Unit)
+} catch (e: RestException) {
+    Timber.e(e, "Supabase sync failed")
+    Result.failure(Exception("Breadcrumb sync failed: ${e.localizedMessage}"))
+}
+```
+
+## When You're Stuck
+
+1. Check `docs/TROUBLESHOOTING_LOG.md` for this exact error
+2. Check the relevant `engine/*/SKILL.md` GOTCHAS section
+3. Check `.cursor/rules/` for a pattern that applies
+4. Fix the actual issue with correct error handling
+5. Document the fix in `docs/TROUBLESHOOTING_LOG.md`
+
+Never ship a disabled safety feature. SLICK is safety-critical.

@@ -1,0 +1,131 @@
+---
+description: Kotlin coding standards for SLICK -- Result<T>, Coroutines, metric units, 24h time, KDoc, Timber
+globs: **/*.kt
+alwaysApply: false
+---
+
+# Kotlin Standards
+
+## Error Handling -- Result<T> Mandatory
+
+All external operations (network, database, sensor, crypto, math) must return `Result<T>`:
+
+```kotlin
+// ❌ BAD -- throws, no error info
+fun calculateGrip(rainfall: Double, temp: Double): Double = ...
+
+// ✅ GOOD
+fun calculateGrip(rainfall: Double, temp: Double): Result<GripIndex> = try {
+    require(rainfall >= 0.0) { "Rainfall cannot be negative: $rainfall mm" }
+    Result.success(GripIndex(score = computeScore(rainfall, temp)))
+} catch (e: IllegalArgumentException) {
+    Result.failure(e)
+} catch (e: Exception) {
+    Result.failure(Exception("Grip calculation failed: ${e.localizedMessage}"))
+}
+```
+
+## Units -- Strictly Metric, Strictly 24h
+
+```kotlin
+// ❌ BANNED -- imperial, AM/PM
+val speedMph = 68.0
+val eta = "2:30 PM"
+
+// ✅ REQUIRED
+val speedKmh = 110.0          // km/h
+val tempCelsius = 32.5        // °C
+val rainfallMm = 2.4          // mm
+val distanceKm = 14.7         // km
+val eta24h = "14:30"          // HH:mm strict 24h
+val arrivalTime = "08:45:00"  // HH:mm:ss for precision
+```
+
+Use `java.time.LocalTime` with `DateTimeFormatter.ofPattern("HH:mm")` for all time operations.
+
+## Coroutines & Flow
+
+```kotlin
+// Suspend functions for one-shot operations
+suspend fun syncWeather(): Result<Unit>
+
+// Flow for continuous streams (GPS, convoy state)
+fun observeLocation(): Flow<Location>
+
+// Always use Dispatchers explicitly in repositories
+suspend fun fetchFromNetwork() = withContext(Dispatchers.IO) { ... }
+
+// Use StateFlow for UI-observable state
+private val _state = MutableStateFlow(ConvoyState.Idle)
+val state: StateFlow<ConvoyState> = _state.asStateFlow()
+```
+
+## Logging -- Timber Only
+
+```kotlin
+// ❌ BANNED in all code
+Log.d("SLICK", "message")
+println("debug")
+
+// ✅ REQUIRED
+Timber.d("Weather node loaded: %s", nodeId)
+Timber.e(exception, "GPS batch failed")
+Timber.w("Thermal threshold reached: %.1f°C", tempCelsius)
+```
+
+Never log coordinates, user IDs, or any PII. Log UUIDs only.
+
+## KDoc on Public Functions
+
+```kotlin
+/**
+ * Calculates lateral crosswind force at a route node.
+ *
+ * Formula: crosswindKmh = windSpeedKmh * sin(|windDirDeg - bearingDeg|)
+ *
+ * @param windSpeedKmh Wind speed in km/h from Open-Meteo
+ * @param windDirDegrees Wind direction in degrees (0-360)
+ * @param bearingDegrees Route bearing at this node (0-360)
+ * @return Result containing crosswind speed in km/h, or failure with cause
+ */
+fun calculateCrosswind(
+    windSpeedKmh: Double,
+    windDirDegrees: Double,
+    bearingDegrees: Double,
+): Result<Double>
+```
+
+## Naming Conventions
+
+- Files: `PascalCase.kt` for classes, `camelCase.kt` for standalone functions
+- Classes/Objects: `PascalCase`
+- Functions/properties: `camelCase`
+- Constants: `UPPER_SNAKE_CASE` in companion objects or top-level `object Constants`
+- No magic numbers -- extract to named constants
+
+```kotlin
+// ❌ BAD
+if (distance > 10.0) { ... }
+
+// ✅ GOOD
+object RouteConstants {
+    const val NODE_INTERVAL_KM = 10.0
+    const val MAX_DETOUR_RADIUS_KM = 15.0
+    const val BLE_HEARTBEAT_INTERVAL_MS = 10_000L
+}
+if (distance > RouteConstants.NODE_INTERVAL_KM) { ... }
+```
+
+## File Size Limits
+
+| Type | Max Lines |
+|------|-----------|
+| Activity / Service | 400 |
+| Composable screen | 250 |
+| ViewModel | 300 |
+| Repository | 300 |
+| Manager / Engine | 400 |
+| Utility / Extension | 150 |
+| Test file | 300 |
+
+Extract to helpers when approaching limits.
